@@ -1,0 +1,22 @@
+{
+"mysql":[{
+	"host":"localhost",
+	"user":"logger",
+	"password":"password",
+	"database":"portfolio",
+	"TransactionTable":"transactions",
+	"ResultTable":"caddata"
+	}],
+"plotly":[{
+	"user":"magoulet",
+	"api":"BwgUtD4nmlTdxmP6M27k"
+	}],
+"alphavantage":[{
+	"api":"0M2357MRIZDYTSJD"
+	}],
+"misc":[{
+	"DownloadOnly":"False",
+	"OfflineData":"False",
+	"Timing":"True"
+	}]
+}
