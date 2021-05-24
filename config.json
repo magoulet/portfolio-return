@@ -5,7 +5,8 @@
 	"password":"password",
 	"database":"portfolio",
 	"TransactionTable":"transactions",
-	"ResultTable":"caddata"
+	"ResultTableCAD":"caddata",
+	"ResultTableUSD":"usddata"
 	}],
 "plotly":[{
 	"user":"magoulet",
