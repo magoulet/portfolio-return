@@ -298,8 +298,8 @@ if __name__ == "__main__":
     Contributions = pd.read_csv('contributions.csv', parse_dates=['Date'])
     # Remove entries > date
     Contributions = Contributions[Contributions['Date'] <= end]
-    TotContributionsCAD = Contributions['Contribution'].sum()
-    TotContributionsUSD = 0
+    TotContributionsCAD = Contributions[Contributions['Currency'] == 'CAD']['Contribution'].sum()
+    TotContributionsUSD = Contributions[Contributions['Currency'] == 'USD']['Contribution'].sum()
 
     print('/n*** Summary (CAD): ***')
     print('Total Contributions: ${:,.0f}\nTotal Value: ${:,.0f}\nTotal Unrealized Gain: ${:,.0f}\nTotal Realized Gain: ${:,.0f}\n\n'.format(TotContributionsCAD, TotValueCAD, TotUnrealGainCAD, TotRealGainCAD))
