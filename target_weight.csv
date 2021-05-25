@@ -1,6 +1,10 @@
-AssetClass,TargetWeight,Ticker
-CdnIndex,25,XIC.TO
-USMarket,25,VUN.TO
-Developed,10,VDU.TO
-Emerging,15,VEE.TO
-CdnBonds,25,VSB.TO
+AssetClass,TargetWeight,Ticker,Currency
+CdnIndex,25,XIC.TO,CAD
+USMarket,25,VUN.TO,CAD
+Developed,10,VDU.TO,CAD
+Emerging,15,VEE.TO,CAD
+CdnBonds,25,VSB.TO,CAD
+Emerging,15,VWO,USD
+USBonds,20,BND,USD
+Developed,15,VEA,USD
+USMarket,50,VTI,USD

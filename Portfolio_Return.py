@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
 #
-# ToDo:
-# - decouple visualization
-# - Incorporate Dividends calculation
-#
 # Notes:
 # Filtering a DF: df[df['Type'] == 'Contr']
 
 import argparse
+from botMsg import telegram_bot_sendtext as sendtext
 import chart_studio
 import chart_studio.plotly as py
 import datetime as dt
-# ~ from mailer import sendmail
 import json
 import mysql.connector
 import numpy as np
@@ -21,21 +17,16 @@ import pandas_datareader.data as web
 import pandas_market_calendars as mcal
 import plotly.express as px
 import plotly.graph_objects as go
-from pandas.plotting import register_matplotlib_converters
-import sys
 import time
 
-scriptpath = "/home/pi/projects/tg_bot/"
-sys.path.append(os.path.abspath(scriptpath))
-
-from botMsg import telegram_bot_sendtext as sendtext
 
 def getConfigurations():
-    path = os.path.dirname(os.path.realpath(sys.argv[0]))
+    path = os.path.dirname(os.path.abspath(__file__))
     configurationFile = path + '/config.json'
     configurations = json.loads(open(configurationFile).read())
 
     return configurations
+
 
 def ArgParser():
     parser = argparse.ArgumentParser(description='Program Flags')
@@ -43,25 +34,27 @@ def ArgParser():
     parser.add_argument('-d', help='Snapshot date - format YYYY-MM-DD', action="store", dest='date', default=False)
     parser.add_argument('-m', help='Sends notification message to user', action="store_true", dest='sendmail', default=False)
     parser.add_argument('-rebalance', help='Rebalances Portfolio', action="store", dest='rebalance', default=False)
+    parser.add_argument('-curr', help='Selected rebalancing currency', action="store", dest='currency', default='CAD')
     args = parser.parse_args()
-    
+
     return args
 
+
 def read_transactions(SQLtable, date):
-    df = DBRead(configurations,SQLtable,date)
+    df = DBRead(configurations, SQLtable, date)
 
     df.sort_values(by=['Date'], ascending=True, inplace=True)
 
     # Add average cost basis
-    df['PurchasePrice'] = df[['Units','Price']].apply(lambda x: x['Units']*x['Price'] if x['Units'] > 0 else 0, axis=1)
-    df['Proceeds'] =   df[['Units','Price']].apply(lambda x: -1*x['Units']*x['Price'] if x['Units'] < 0 else 0, axis=1)
+    df['PurchasePrice'] = df[['Units', 'Price']].apply(lambda x: x['Units']*x['Price'] if x['Units'] > 0 else 0, axis=1)
+    df['Proceeds'] = df[['Units', 'Price']].apply(lambda x: -1*x['Units']*x['Price'] if x['Units'] < 0 else 0, axis=1)
     df['CumulUnits'] = df.groupby(['Ticker'])['Units'].cumsum()
 
     # Walk through df in historical order
     df = df.groupby('Ticker')
     result = pd.DataFrame()
 
-    for name,group in df:
+    for name, group in df:
         df2 = df.get_group(name).reset_index(drop=True)
 
         df2.loc[0, 'SumPurchaseCost'] = df2.loc[0, 'PurchasePrice']
@@ -69,28 +62,33 @@ def read_transactions(SQLtable, date):
 
         for index, row in df2.iterrows():
             if index > 0:
-                if row['Units'] > 0: #Buy order
+                # Buy order
+                if row['Units'] > 0:
                     df2.loc[index, 'SumPurchaseCost'] = df2.loc[index, 'PurchasePrice'] + df2.loc[index-1, 'SumPurchaseCost']
                     df2.loc[index, 'AvgCost'] = df2.loc[index, 'SumPurchaseCost'] / df2.loc[index, 'CumulUnits']
                     df2.loc[index, 'CostBasis'] = np.nan
                     df2.loc[index, 'RealGain'] = np.nan
 
-                else: #Sell order
-                    df2.loc[index, 'AvgCost'] = df2.loc[index-1,'AvgCost']
+                # Sell order
+                else:
+                    df2.loc[index, 'AvgCost'] = df2.loc[index-1, 'AvgCost']
                     df2.loc[index, 'SumPurchaseCost'] = df2.loc[index, 'CumulUnits'] * df2.loc[index, 'AvgCost']
-                    df2.loc[index, 'CostBasis'] = -1* df2.loc[index, 'AvgCost'] * df2.loc[index, 'Units']
+                    df2.loc[index, 'CostBasis'] = -1 * df2.loc[index, 'AvgCost'] * df2.loc[index, 'Units']
                     df2.loc[index, 'RealGain'] = df2.loc[index, 'Proceeds'] - df2.loc[index, 'CostBasis']
 
         result = result.append(df2, ignore_index=True, sort=True)
     return result
 
-def marketopen(day): #Check if markets are open at noon on the chosen day
-    tsx = mcal.get_calendar('TSX')
-    schedule = tsx.schedule(start_date = '2010-01-01', end_date = dt.date.today())
-    open = tsx.open_at_time(schedule, pd.Timestamp(day + pd.Timedelta('+9h'), tz='US/Pacific'))
+
+def marketopen(day):  # Check if markets are open at noon on the chosen day
+    market = mcal.get_calendar('TSX')
+    # market = mcal.get_calendar('NASDAQ')
+    schedule = market.schedule(start_date=day - dt.timedelta(days=90), end_date=dt.date.today())
+    open = market.open_at_time(schedule, pd.Timestamp(day + pd.Timedelta('+9h'), tz='US/Pacific'))
     return open
 
-def dl_pricing_data(df,start,end):
+
+def dl_pricing_data(df, start, end):
     tickers = df['Ticker'].unique()
     for ticker in tickers:
         try:
@@ -101,34 +99,30 @@ def dl_pricing_data(df,start,end):
             print('{} is missing!'.format(ticker))
             pass
 
-def get_price(tickers,end):
-    '''  
-    Expected format:  
+
+def get_price(tickers, end):
+    '''
+    Expected format:
                         Price
-    Attributes Symbols           
+    Attributes Symbols
     Adj Close  BNS.TO   67.870003
                CAE.TO   33.270000
                ...      ...
     '''
-    if OfflineData == True:
-        df = pd.read_csv(ticker+'_data.csv', parse_dates = ['Date'], index_col=['Date'])
-        lastprice = df.loc[end,:]['Close']
-        return lastprice
-    else:
-        try:
-            # ~ breakpoint()
-            print("Getting prices for : ", tickers)
-            print("Date: ", end)
-            quotes = web.DataReader(tickers, 'yahoo', end ,end)
-            # quotes = web.DataReader(ticker, 'av-daily', start, end,api_key="0M2357MRIZDYTSJD")
-            quotes = quotes.transpose()
-            adjclose = quotes.head(len(tickers))
-            adjclose.columns = ["Price"]
+    try:
+        print("Getting prices for : ", tickers)
+        print("Date: ", end)
+        quotes = web.DataReader(tickers, 'yahoo',  end-dt.timedelta(days=2), end)
+        # quotes = web.DataReader(ticker, 'av-daily', start, end,api_key="0M2357MRIZDYTSJD")
+        quotes = quotes.transpose()
+        adjclose = quotes[[end]].head(len(tickers))
+        adjclose.columns = ["Price"]
 
-            return adjclose
-        except:
-            print("Error getting online quotes...")
-            exit()
+        return adjclose
+    except:
+        print("Error getting online quotes...")
+        exit()
+
 
 def DatabaseHelper(sqlCommand, sqloperation, configurations):
     host = configurations["mysql"][0]["host"]
@@ -141,7 +135,7 @@ def DatabaseHelper(sqlCommand, sqloperation, configurations):
 
     if sqloperation == "Select":
         try:
-            data = pd.read_sql(sqlCommand,my_connect)
+            data = pd.read_sql(sqlCommand, my_connect)
         except:
             print("Cannot select from the database...")
     if sqloperation == "Insert":
@@ -155,20 +149,24 @@ def DatabaseHelper(sqlCommand, sqloperation, configurations):
     my_connect.close()
     return data
 
+
 def DBWrite(end, TotValue, TotContributions, configurations, table):
     sqlCommand = "INSERT INTO %s VALUES ('%s', '%s', '%s') ON DUPLICATE KEY UPDATE value=VALUES(value), contributions=VALUES(contributions);" % (table, end, TotValue, TotContributions)
-    DatabaseHelper(sqlCommand,"Insert", configurations)
+    DatabaseHelper(sqlCommand, "Insert", configurations)
     return None
 
-def DBRead(configurations,table,date):
+
+def DBRead(configurations, table, date):
     sqlCommand = "SELECT * FROM %s WHERE Date <= '%s';" % (table, date)
-    data = DatabaseHelper(sqlCommand,"Select", configurations)
+    data = DatabaseHelper(sqlCommand, "Select", configurations)
     return data
+
 
 def get_daily_variation(df):
     df['daily variation'] = df['value'].diff()
     dailydelta = df['daily variation'].iloc[-1]
     return df, dailydelta
+
 
 def plot_results(df):
 
@@ -176,46 +174,49 @@ def plot_results(df):
     chart_studio.tools.set_credentials_file(username=username, api_key=api_key)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df['date'],y=df['value'],
-                        mode='lines',
-                        name='Portfolio Value'))
+    fig.add_trace(go.Scatter(x=df['date'], y=df['value'],
+                             mode='lines',
+                             name='Portfolio Value'))
 
-    fig.add_trace(go.Scatter(x=df['date'],y=df['contributions'],
-                        mode='lines',
-                        name='Total Contributions'))
+    fig.add_trace(go.Scatter(x=df['date'], y=df['contributions'],
+                             mode='lines',
+                             name='Total Contributions'))
 
     fig.update_layout(title='Total Portfolio Value',
-                   xaxis_title='Date',
-                   yaxis_title='Value (CAD)')
+                      xaxis_title='Date',
+                      yaxis_title='Value (CAD)')
 
-    fig.update_layout(xaxis_range=['2019-09-01',dt.date.today()])
+    fig.update_layout(xaxis_range=['2019-09-01', dt.date.today()])
     # fig.update_xaxes(
     #     range=['2019-09-01',dt.date.today()],
     #     constrain="domain"
     # )
     fig.update_yaxes(
-        range=[df['value'].truncate(before='2019-09-01').min(),df['value'].max()+10000],
+        range=[df['value'].truncate(before='2019-09-01').min(), df['value'].max()+10000],
         constrain="domain"
     )
 
     # fig.show()
-    py.plot(fig, filename = 'portfolio', auto_open=False)
+    py.plot(fig, filename='portfolio', auto_open=False)
+
 
 def plot_assets_distribution(df):
     df = df.query('Broker == "dob"')
     df.reset_index(inplace=True)
     fig = px.pie(df, values='Value', names='AssetClass', title='Self-Managed Asset Distribution')
     # fig.show()
-    py.plot(fig, filename = 'portfolio_distribution', auto_open=False)
+    py.plot(fig, filename='portfolio_distribution', auto_open=False)
     # Reference: https://plotly.com/python/pie-charts/
 
-def rebalance(df,ExtraCash,end):
+
+def rebalance(df, ExtraCash, currency, end):
     print('\nRebalancing Portfolio with ${:,.0f} extra cash\n'.format(ExtraCash))
     # Current weight
     # Sort by AssetClass
+    df = df[df['Currency'] == currency]
     Weight = df.pivot_table(index='AssetClass', values=['Value'], aggfunc=np.sum)
     TargetWeight = pd.read_csv('target_weight.csv')
-    Weight = pd.merge(Weight, TargetWeight, on='AssetClass', how='inner')
+    Weight = pd.merge(Weight, TargetWeight[TargetWeight['Currency'] == currency], on='AssetClass', how='inner')
     Weight['CurrWeight'] = Weight['Value'] / Weight['Value'].sum() * 100
 
     # Delta
@@ -226,18 +227,17 @@ def rebalance(df,ExtraCash,end):
     # ~ print(Weight)
     # ~ print(Weight.columns)
     # ~ input("debug 1...")
-    
-    # Merge the price column to the Weight dataframe
-    Weight = pd.merge(Weight,df[['Ticker','Price']],left_on='Ticker',right_on='Ticker',how='inner')
 
-    Weight['NumUnits'] = (Weight['Delta'] / Weight['Price']).round(0)
+    # Merge the price column to the Weight dataframe
+    Weight = pd.merge(Weight, df[['Ticker', 'Price']], left_on='Ticker', right_on='Ticker', how='inner')
+
+    Weight['NumUnits'] = (Weight['Delta'] / Weight['Price']).round(4)
 
     print('\nPortfolio Rebalance:')
     print(Weight)
 
-if __name__ == "__main__":
-    # ~ register_matplotlib_converters()
 
+if __name__ == "__main__":
     StartTime = time.time()
 
     configurations = getConfigurations()
@@ -247,7 +247,8 @@ if __name__ == "__main__":
     OfflineData = eval(configurations["misc"][0]["OfflineData"])
     Timing = eval(configurations["misc"][0]["Timing"])
     TransactionTable = configurations["mysql"][0]["TransactionTable"]
-    ResultTable = configurations["mysql"][0]["ResultTable"]
+    ResultTableCAD = configurations["mysql"][0]["ResultTableCAD"]
+    ResultTableUSD = configurations["mysql"][0]["ResultTableUSD"]
 
     args = ArgParser()
 
@@ -260,74 +261,82 @@ if __name__ == "__main__":
     else:
         end = dt.datetime.combine(dt.date.today(), dt.datetime.min.time())
 
-    if marketopen(end) == False:
+    if not marketopen(end):
         print("Markets closed on the chosen day!")
         quit()
 
     df = read_transactions(TransactionTable, end)
 
-    portfolio = df.pivot_table(index=['Ticker', 'Broker', 'AssetClass'], values=['CumulUnits','SumPurchaseCost','RealGain'], aggfunc={'CumulUnits':'last','SumPurchaseCost':'last','RealGain':'sum'}, fill_value=0)
+    portfolio = df.pivot_table(index=['Ticker', 'Broker', 'AssetClass', 'Currency'], values=['CumulUnits', 'SumPurchaseCost', 'RealGain'], aggfunc={'CumulUnits': 'last', 'SumPurchaseCost': 'last', 'RealGain': 'sum'}, fill_value=0)
 
-    TotRealGain = portfolio['RealGain'].sum().round(2)
+    portfolio.reset_index(inplace=True)
 
-    # Remove empty tickers
+    TotRealGainCAD = portfolio[portfolio['Currency'] == 'CAD']['RealGain'].sum().round(2)
+    TotRealGainUSD = portfolio[portfolio['Currency'] == 'USD']['RealGain'].sum().round(2)
+
+    # Remove tickers with 0 units
     portfolio = portfolio[portfolio['CumulUnits'] != 0]
 
-    if DownloadOnly == True:
-        dl_pricing_data(df,'2015-01-01',end) # Download all data and write into CSV
-        quit()
-
     print("Getting online quotes...")
-    portfolio.reset_index(inplace=True)
     tickers = portfolio['Ticker'].to_list()
     prices = get_price(tickers, end)
     portfolio = pd.merge(portfolio, prices, left_on='Ticker', right_on='Symbols', how='inner')
 
     # Portfolio Value
     portfolio['Value'] = portfolio['Price'] * portfolio['CumulUnits']
-    TotValue = portfolio['Value'].sum().round(2)
+    TotValueCAD = portfolio[portfolio['Currency'] == 'CAD']['Value'].sum().round(2)
+    TotValueUSD = portfolio[portfolio['Currency'] == 'USD']['Value'].sum().round(2)
 
     # Unrealized Gain/Loss
     portfolio['UnrealGainPerc'] = (portfolio['Value'] - portfolio['SumPurchaseCost']) / portfolio['SumPurchaseCost'] * 100
-    portfolio['TotalUnrealGain']  = portfolio['Value'] - portfolio['SumPurchaseCost']
+    portfolio['TotalUnrealGain'] = portfolio['Value'] - portfolio['SumPurchaseCost']
     portfolio.sort_values(by=['TotalUnrealGain'], inplace=True)
-    TotUnrealGain = portfolio['TotalUnrealGain'].sum().round(2)
+    TotUnrealGainCAD = portfolio[portfolio['Currency'] == 'CAD']['TotalUnrealGain'].sum().round(2)
+    TotUnrealGainUSD = portfolio[portfolio['Currency'] == 'USD']['TotalUnrealGain'].sum().round(2)
 
     # Contributions to date
-    Contributions = pd.read_csv('contributions.csv', parse_dates = ['Date'])
+    Contributions = pd.read_csv('contributions.csv', parse_dates=['Date'])
     # Remove entries > date
     Contributions = Contributions[Contributions['Date'] <= end]
-    TotContributions = Contributions['Contribution'].sum()
+    TotContributionsCAD = Contributions[Contributions['Currency'] == 'CAD']['Contribution'].sum()
+    TotContributionsUSD = Contributions[Contributions['Currency'] == 'USD']['Contribution'].sum()
 
-    print('Summary: ')
-    print('Total Contributions: ${:,.0f}\nTotal Value: ${:,.0f}\nTotal Unrealized Gain: ${:,.0f}\nTotal Realized Gain: ${:,.0f}\n\n'.format(TotContributions,TotValue,TotUnrealGain,TotRealGain))
-    print(portfolio.round(2))
+    print('/n*** Summary (CAD): ***')
+    print('Total Contributions: ${:,.0f}\nTotal Value: ${:,.0f}\nTotal Unrealized Gain: ${:,.0f}\nTotal Realized Gain: ${:,.0f}\n\n'.format(TotContributionsCAD, TotValueCAD, TotUnrealGainCAD, TotRealGainCAD))
+    print(portfolio[portfolio['Currency'] == 'CAD'].round(2))
+
+    print('/n*** Summary (USD): ***')
+    print('Total Contributions: ${:,.0f}\nTotal Value: ${:,.0f}\nTotal Unrealized Gain: ${:,.0f}\nTotal Realized Gain: ${:,.0f}\n\n'.format(TotContributionsUSD, TotValueUSD, TotUnrealGainUSD, TotRealGainUSD))
+    print(portfolio[portfolio['Currency'] == 'USD'].round(2))
 
     if args.rebalance:
         ExtraInvest = args.rebalance
-        rebalance(portfolio,float(ExtraInvest),end)
+        currency = args.currency
+        rebalance(portfolio, float(ExtraInvest), currency, end)
 
     if args.dboutput:
         print("Writing to the DB...")
-        DBWrite(end, TotValue, TotContributions, configurations, ResultTable)
+        DBWrite(end, TotValueCAD, TotContributionsCAD, configurations,
+                ResultTableCAD)
 
-        TimeHistory = DBRead(configurations,ResultTable,dt.date.today())
-        TimeHistory, dailydelta = get_daily_variation(TimeHistory)
-        
-        print("Plotting Results...")
-        plot_results(TimeHistory)
-        plot_assets_distribution(portfolio)
+        TimeHistoryCAD = DBRead(configurations, ResultTableCAD, dt.date.today())
+        TimeHistoryCAD, dailydeltaCAD = get_daily_variation(TimeHistoryCAD)
 
-        # sender = 'magoulet@gmail.com'
-        # to     = 'magoulet@gmail.com'
-        # subject = 'Portfolio Value: ' + str(dt.date.today())
-        body = 'Daily variation: $' + str(dailydelta.round(2)) + '\nTotal value of the portfolio: $' + str(TotValue)
+        DBWrite(end, TotValueUSD, TotContributionsUSD, configurations,
+                ResultTableUSD)
+
+        TimeHistoryUSD = DBRead(configurations, ResultTableUSD, dt.date.today())
+        TimeHistoryUSD, dailydeltaUSD = get_daily_variation(TimeHistoryUSD)
+
+        bodyCAD = 'Daily variation (CAD): $' + str(dailydeltaCAD.round(2)) + '\nTotal value of the portfolio: $' + str(TotValueCAD)
+        bodyUSD = 'Daily variation (USD): $' + str(dailydeltaUSD.round(2)) + '\nTotal value of the portfolio: $' + str(TotValueUSD)
 
         if args.sendmail:
             # sendmail(sender, to, subject, body)
             print("Sending mail to user...")
-            sendtext(body)
+            sendtext(bodyCAD)
+            sendtext(bodyUSD)
 
     FinishTime = time.time()
     if Timing:
-        print("Total Execution Time: ",FinishTime-StartTime)
+        print("Total Execution Time: ", FinishTime-StartTime)
