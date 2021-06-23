@@ -5,6 +5,7 @@
 	"password":"password",
 	"database":"portfolio",
 	"TransactionTable":"transactions",
+	"ContributionTable":"contributions",
 	"ResultTableCAD":"caddata",
 	"ResultTableUSD":"usddata"
 	}],
