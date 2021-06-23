@@ -13,11 +13,10 @@ import mysql.connector
 import numpy as np
 import os
 import pandas as pd
-import pandas_datareader.data as web
-import pandas_market_calendars as mcal
 import plotly.express as px
 import plotly.graph_objects as go
 import time
+import yfinance as yf
 
 
 def getConfigurations():
@@ -38,6 +37,11 @@ def ArgParser():
     args = parser.parse_args()
 
     return args
+
+
+def read_contributions(SQLtable, date):
+    df = DBRead(configurations, SQLtable, date)
+    return df
 
 
 def read_transactions(SQLtable, date):
@@ -80,27 +84,7 @@ def read_transactions(SQLtable, date):
     return result
 
 
-def marketopen(day):  # Check if markets are open at noon on the chosen day
-    market = mcal.get_calendar('TSX')
-    # market = mcal.get_calendar('NASDAQ')
-    schedule = market.schedule(start_date=day - dt.timedelta(days=90), end_date=dt.date.today())
-    open = market.open_at_time(schedule, pd.Timestamp(day + pd.Timedelta('+9h'), tz='US/Pacific'))
-    return open
-
-
-def dl_pricing_data(df, start, end):
-    tickers = df['Ticker'].unique()
-    for ticker in tickers:
-        try:
-            print(ticker)
-            quote = web.DataReader(ticker, 'yahoo', start, end)
-            quote.to_csv(ticker+'_data.csv')
-        except:
-            print('{} is missing!'.format(ticker))
-            pass
-
-
-def get_price(tickers, end):
+def get_price(tickers, date):
     '''
     Expected format:
                         Price
@@ -111,14 +95,16 @@ def get_price(tickers, end):
     '''
     try:
         print("Getting prices for : ", tickers)
-        print("Date: ", end)
-        quotes = web.DataReader(tickers, 'yahoo',  end-dt.timedelta(days=2), end)
+        print("Date: ", date)
+        df = yf.download(tickers, start=date, end=date+dt.timedelta(days=1), group_by='Ticker')
+        if df.empty:
+            print('DataFrame is empty!')
+            exit()
+        # quotes = web.DataReader(tickers, 'yahoo',  end-dt.timedelta(days=2), end)
         # quotes = web.DataReader(ticker, 'av-daily', start, end,api_key="0M2357MRIZDYTSJD")
-        quotes = quotes.transpose()
-        adjclose = quotes[[end]].head(len(tickers))
-        adjclose.columns = ["Price"]
+        result = df[:1].stack(level=0).rename_axis(['date', 'ticker']).reset_index(level=1)
 
-        return adjclose
+        return result[['ticker', 'Adj Close']].set_index('ticker')
     except:
         print("Error getting online quotes...")
         exit()
@@ -247,6 +233,7 @@ if __name__ == "__main__":
     OfflineData = eval(configurations["misc"][0]["OfflineData"])
     Timing = eval(configurations["misc"][0]["Timing"])
     TransactionTable = configurations["mysql"][0]["TransactionTable"]
+    ContributionTable = configurations["mysql"][0]["ContributionTable"]
     ResultTableCAD = configurations["mysql"][0]["ResultTableCAD"]
     ResultTableUSD = configurations["mysql"][0]["ResultTableUSD"]
 
@@ -254,19 +241,18 @@ if __name__ == "__main__":
 
     if args.date:
         try:
-            end = dt.datetime.strptime(args.date, "%Y-%m-%d")
+            date = dt.datetime.strptime(args.date, "%Y-%m-%d").date()
         except ValueError:
             msg = "Not a valid date: '{0}'.".format(args.date)
             raise argparse.ArgumentTypeError(msg)
     else:
-        end = dt.datetime.combine(dt.date.today(), dt.datetime.min.time())
+        date = dt.date.today()
 
-    if not marketopen(end):
-        print("Markets closed on the chosen day!")
-        quit()
+    # if not marketopen(date):
+    #     print("Markets closed on the chosen day!")
+    #     quit()
 
-    df = read_transactions(TransactionTable, end)
-
+    df = read_transactions(TransactionTable, date)
     portfolio = df.pivot_table(index=['Ticker', 'Broker', 'AssetClass', 'Currency'], values=['CumulUnits', 'SumPurchaseCost', 'RealGain'], aggfunc={'CumulUnits': 'last', 'SumPurchaseCost': 'last', 'RealGain': 'sum'}, fill_value=0)
 
     portfolio.reset_index(inplace=True)
@@ -279,11 +265,11 @@ if __name__ == "__main__":
 
     print("Getting online quotes...")
     tickers = portfolio['Ticker'].to_list()
-    prices = get_price(tickers, end)
-    portfolio = pd.merge(portfolio, prices, left_on='Ticker', right_on='Symbols', how='inner')
+    prices = get_price(tickers, date)
+    portfolio = pd.merge(portfolio, prices, left_on='Ticker', right_on='ticker', how='inner')
 
     # Portfolio Value
-    portfolio['Value'] = portfolio['Price'] * portfolio['CumulUnits']
+    portfolio['Value'] = portfolio['Adj Close'] * portfolio['CumulUnits']
     TotValueCAD = portfolio[portfolio['Currency'] == 'CAD']['Value'].sum().round(2)
     TotValueUSD = portfolio[portfolio['Currency'] == 'USD']['Value'].sum().round(2)
 
@@ -295,34 +281,32 @@ if __name__ == "__main__":
     TotUnrealGainUSD = portfolio[portfolio['Currency'] == 'USD']['TotalUnrealGain'].sum().round(2)
 
     # Contributions to date
-    Contributions = pd.read_csv('contributions.csv', parse_dates=['Date'])
-    # Remove entries > date
-    Contributions = Contributions[Contributions['Date'] <= end]
-    TotContributionsCAD = Contributions[Contributions['Currency'] == 'CAD']['Contribution'].sum()
-    TotContributionsUSD = Contributions[Contributions['Currency'] == 'USD']['Contribution'].sum()
+    Contributions = read_contributions(ContributionTable, date)
+    TotContributionsCAD = Contributions[Contributions['currency'] == 'CAD']['contribution'].sum()
+    TotContributionsUSD = Contributions[Contributions['currency'] == 'USD']['contribution'].sum()
 
-    print('/n*** Summary (CAD): ***')
+    print('\n*** Summary (CAD): ***')
     print('Total Contributions: ${:,.0f}\nTotal Value: ${:,.0f}\nTotal Unrealized Gain: ${:,.0f}\nTotal Realized Gain: ${:,.0f}\n\n'.format(TotContributionsCAD, TotValueCAD, TotUnrealGainCAD, TotRealGainCAD))
     print(portfolio[portfolio['Currency'] == 'CAD'].round(2))
 
-    print('/n*** Summary (USD): ***')
+    print('\n*** Summary (USD): ***')
     print('Total Contributions: ${:,.0f}\nTotal Value: ${:,.0f}\nTotal Unrealized Gain: ${:,.0f}\nTotal Realized Gain: ${:,.0f}\n\n'.format(TotContributionsUSD, TotValueUSD, TotUnrealGainUSD, TotRealGainUSD))
     print(portfolio[portfolio['Currency'] == 'USD'].round(2))
 
     if args.rebalance:
         ExtraInvest = args.rebalance
         currency = args.currency
-        rebalance(portfolio, float(ExtraInvest), currency, end)
+        rebalance(portfolio, float(ExtraInvest), currency, date)
 
     if args.dboutput:
         print("Writing to the DB...")
-        DBWrite(end, TotValueCAD, TotContributionsCAD, configurations,
+        DBWrite(date, TotValueCAD, TotContributionsCAD, configurations,
                 ResultTableCAD)
 
         TimeHistoryCAD = DBRead(configurations, ResultTableCAD, dt.date.today())
         TimeHistoryCAD, dailydeltaCAD = get_daily_variation(TimeHistoryCAD)
 
-        DBWrite(end, TotValueUSD, TotContributionsUSD, configurations,
+        DBWrite(date, TotValueUSD, TotContributionsUSD, configurations,
                 ResultTableUSD)
 
         TimeHistoryUSD = DBRead(configurations, ResultTableUSD, dt.date.today())
