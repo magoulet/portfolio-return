@@ -39,6 +39,11 @@ def ArgParser():
     return args
 
 
+def read_contributions(SQLtable, date):
+    df = DBRead(configurations, SQLtable, date)
+    return df
+
+
 def read_transactions(SQLtable, date):
     df = DBRead(configurations, SQLtable, date)
 
@@ -228,6 +233,7 @@ if __name__ == "__main__":
     OfflineData = eval(configurations["misc"][0]["OfflineData"])
     Timing = eval(configurations["misc"][0]["Timing"])
     TransactionTable = configurations["mysql"][0]["TransactionTable"]
+    ContributionTable = configurations["mysql"][0]["ContributionTable"]
     ResultTableCAD = configurations["mysql"][0]["ResultTableCAD"]
     ResultTableUSD = configurations["mysql"][0]["ResultTableUSD"]
 
@@ -275,11 +281,9 @@ if __name__ == "__main__":
     TotUnrealGainUSD = portfolio[portfolio['Currency'] == 'USD']['TotalUnrealGain'].sum().round(2)
 
     # Contributions to date
-    Contributions = pd.read_csv('contributions.csv', parse_dates=['Date'])
-    # Remove entries > date
-    Contributions = Contributions[Contributions['Date'] <= pd.to_datetime(date)]
-    TotContributionsCAD = Contributions[Contributions['Currency'] == 'CAD']['Contribution'].sum()
-    TotContributionsUSD = Contributions[Contributions['Currency'] == 'USD']['Contribution'].sum()
+    Contributions = read_contributions(ContributionTable, date)
+    TotContributionsCAD = Contributions[Contributions['currency'] == 'CAD']['contribution'].sum()
+    TotContributionsUSD = Contributions[Contributions['currency'] == 'USD']['contribution'].sum()
 
     print('\n*** Summary (CAD): ***')
     print('Total Contributions: ${:,.0f}\nTotal Value: ${:,.0f}\nTotal Unrealized Gain: ${:,.0f}\nTotal Realized Gain: ${:,.0f}\n\n'.format(TotContributionsCAD, TotValueCAD, TotUnrealGainCAD, TotRealGainCAD))
