@@ -34,6 +34,7 @@ def ArgParser():
     parser.add_argument('-m', help='Sends notification message to user', action="store_true", dest='sendmail', default=False)
     parser.add_argument('-rebalance', help='Rebalances Portfolio', action="store", dest='rebalance', default=False)
     parser.add_argument('-curr', help='Selected rebalancing currency', action="store", dest='currency', default='CAD')
+    parser.add_argument('-broker', help='Selected rebalancing broker', action="store", dest='broker', default='dob')
     args = parser.parse_args()
 
     return args
@@ -195,11 +196,11 @@ def plot_assets_distribution(df):
     # Reference: https://plotly.com/python/pie-charts/
 
 
-def rebalance(df, ExtraCash, currency, end):
+def rebalance(df, ExtraCash, broker, currency, end):
     print('\nRebalancing Portfolio with ${:,.0f} extra cash\n'.format(ExtraCash))
     # Current weight
     # Sort by AssetClass
-    df = df[df['Currency'] == currency]
+    df = df[df['Broker'] == broker]
     Weight = df.pivot_table(index='AssetClass', values=['Value'], aggfunc=np.sum)
     TargetWeight = pd.read_csv('target_weight.csv')
     Weight = pd.merge(Weight, TargetWeight[TargetWeight['Currency'] == currency], on='AssetClass', how='inner')
@@ -215,9 +216,9 @@ def rebalance(df, ExtraCash, currency, end):
     # ~ input("debug 1...")
 
     # Merge the price column to the Weight dataframe
-    Weight = pd.merge(Weight, df[['Ticker', 'Price']], left_on='Ticker', right_on='Ticker', how='inner')
+    Weight = pd.merge(Weight, df[['Ticker', 'Adj Close']], left_on='Ticker', right_on='Ticker', how='inner')
 
-    Weight['NumUnits'] = (Weight['Delta'] / Weight['Price']).round(4)
+    Weight['NumUnits'] = (Weight['Delta'] / Weight['Adj Close']).round(4)
 
     print('\nPortfolio Rebalance:')
     print(Weight)
@@ -295,8 +296,9 @@ if __name__ == "__main__":
 
     if args.rebalance:
         ExtraInvest = args.rebalance
+        broker = args.broker
         currency = args.currency
-        rebalance(portfolio, float(ExtraInvest), currency, date)
+        rebalance(portfolio, float(ExtraInvest), broker, currency, date)
 
     if args.dboutput:
         print("Writing to the DB...")
