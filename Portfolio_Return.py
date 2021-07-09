@@ -50,6 +50,10 @@ def read_transactions(SQLtable, date):
 
     df.sort_values(by=['Date'], ascending=True, inplace=True)
 
+    # Adjust for stock splits
+    df['Units'] = df['Units'] * df['SplitRatio']
+    df['Price'] = df['Price'] / df['SplitRatio']
+
     # Add average cost basis
     df['PurchasePrice'] = df[['Units', 'Price']].apply(lambda x: x['Units']*x['Price'] if x['Units'] > 0 else 0, axis=1)
     df['Proceeds'] = df[['Units', 'Price']].apply(lambda x: -1*x['Units']*x['Price'] if x['Units'] < 0 else 0, axis=1)
