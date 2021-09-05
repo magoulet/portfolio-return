@@ -5,16 +5,12 @@
 
 import argparse
 from botMsg import telegram_bot_sendtext as sendtext
-import chart_studio
-import chart_studio.plotly as py
 import datetime as dt
 import json
 import mysql.connector
 import numpy as np
 import os
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import time
 import yfinance as yf
 
@@ -40,13 +36,13 @@ def ArgParser():
     return args
 
 
-def read_contributions(SQLtable, date):
-    df = DBRead(configurations, SQLtable, date)
+def readContributions(table, date):
+    df = DBRead(configurations, table, date)
     return df
 
 
-def read_transactions(SQLtable, date):
-    df = DBRead(configurations, SQLtable, date)
+def readTransactions(table, date):
+    df = DBRead(configurations, table, date)
 
     df.sort_values(by=['Date'], ascending=True, inplace=True)
 
@@ -89,7 +85,7 @@ def read_transactions(SQLtable, date):
     return result
 
 
-def get_price(tickers, date):
+def getPrice(tickers, date):
     '''
     Expected format:
                         Price
@@ -105,8 +101,6 @@ def get_price(tickers, date):
         if df.empty:
             print('DataFrame is empty!')
             exit()
-        # quotes = web.DataReader(tickers, 'yahoo',  end-dt.timedelta(days=2), end)
-        # quotes = web.DataReader(ticker, 'av-daily', start, end,api_key="0M2357MRIZDYTSJD")
         result = df[:1].stack(level=0).rename_axis(['date', 'ticker']).reset_index(level=1)
 
         return result[['ticker', 'Adj Close']].set_index('ticker')
@@ -115,7 +109,7 @@ def get_price(tickers, date):
         exit()
 
 
-def DatabaseHelper(sqlCommand, sqloperation, configurations):
+def databaseHelper(sqlCommand, sqloperation, configurations):
     host = configurations["mysql"][0]["host"]
     user = configurations["mysql"][0]["user"]
     password = configurations["mysql"][0]["password"]
@@ -141,63 +135,26 @@ def DatabaseHelper(sqlCommand, sqloperation, configurations):
     return data
 
 
-def DBWrite(end, TotValue, TotContributions, configurations, table):
+def writeDBValue(end, TotValue, TotContributions, configurations, table):
     sqlCommand = "INSERT INTO %s VALUES ('%s', '%s', '%s') ON DUPLICATE KEY UPDATE value=VALUES(value), contributions=VALUES(contributions);" % (table, end, TotValue, TotContributions)
-    DatabaseHelper(sqlCommand, "Insert", configurations)
+    databaseHelper(sqlCommand, "Insert", configurations)
     return None
 
 
 def DBRead(configurations, table, date):
     sqlCommand = "SELECT * FROM %s WHERE Date <= '%s';" % (table, date)
-    data = DatabaseHelper(sqlCommand, "Select", configurations)
+    data = databaseHelper(sqlCommand, "Select", configurations)
     return data
 
+def timeHistoryRead(configurations, table, date):
+    sqlCommand = "SELECT * FROM %s WHERE date <= '%s' ORDER BY Date desc LIMIT 1;" % (table, date)
+    data = databaseHelper(sqlCommand, "Select", configurations)
+    return data
 
-def get_daily_variation(df):
+def getDailyVariation(df):
     df['daily variation'] = df['value'].diff()
     dailydelta = df['daily variation'].iloc[-1]
-    return df, dailydelta
-
-
-def plot_results(df):
-
-    # your api key - go to profile > settings > regenerate key
-    chart_studio.tools.set_credentials_file(username=username, api_key=api_key)
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df['date'], y=df['value'],
-                             mode='lines',
-                             name='Portfolio Value'))
-
-    fig.add_trace(go.Scatter(x=df['date'], y=df['contributions'],
-                             mode='lines',
-                             name='Total Contributions'))
-
-    fig.update_layout(title='Total Portfolio Value',
-                      xaxis_title='Date',
-                      yaxis_title='Value (CAD)')
-
-    fig.update_layout(xaxis_range=['2019-09-01', dt.date.today()])
-    # fig.update_xaxes(
-    #     range=['2019-09-01',dt.date.today()],
-    #     constrain="domain"
-    # )
-    fig.update_yaxes(
-        range=[df['value'].truncate(before='2019-09-01').min(), df['value'].max()+10000],
-        constrain="domain"
-    )
-
-    # fig.show()
-    py.plot(fig, filename='portfolio', auto_open=False)
-
-
-def plot_assets_distribution(df):
-    df = df.query('Broker == "dob"')
-    df.reset_index(inplace=True)
-    fig = px.pie(df, values='Value', names='AssetClass', title='Self-Managed Asset Distribution')
-    # fig.show()
-    py.plot(fig, filename='portfolio_distribution', auto_open=False)
-    # Reference: https://plotly.com/python/pie-charts/
+    return dailydelta
 
 
 def rebalance(df, ExtraCash, broker, currency, end):
@@ -257,7 +214,8 @@ if __name__ == "__main__":
     #     print("Markets closed on the chosen day!")
     #     quit()
 
-    df = read_transactions(TransactionTable, date)
+
+    df = readTransactions(TransactionTable, date)
     portfolio = df.pivot_table(index=['Ticker', 'Broker', 'AssetClass', 'Currency'], values=['CumulUnits', 'SumPurchaseCost', 'RealGain'], aggfunc={'CumulUnits': 'last', 'SumPurchaseCost': 'last', 'RealGain': 'sum'}, fill_value=0)
 
     portfolio.reset_index(inplace=True)
@@ -270,7 +228,7 @@ if __name__ == "__main__":
 
     print("Getting online quotes...")
     tickers = portfolio['Ticker'].to_list()
-    prices = get_price(tickers, date)
+    prices = getPrice(tickers, date)
     portfolio = pd.merge(portfolio, prices, left_on='Ticker', right_on='ticker', how='inner')
 
     # Portfolio Value
@@ -286,7 +244,7 @@ if __name__ == "__main__":
     TotUnrealGainUSD = portfolio[portfolio['Currency'] == 'USD']['TotalUnrealGain'].sum().round(2)
 
     # Contributions to date
-    Contributions = read_contributions(ContributionTable, date)
+    Contributions = readContributions(ContributionTable, date)
     TotContributionsCAD = Contributions[Contributions['currency'] == 'CAD']['contribution'].sum()
     TotContributionsUSD = Contributions[Contributions['currency'] == 'USD']['contribution'].sum()
 
@@ -306,17 +264,17 @@ if __name__ == "__main__":
 
     if args.dboutput:
         print("Writing to the DB...")
-        DBWrite(date, TotValueCAD, TotContributionsCAD, configurations,
+        writeDBValue(date, TotValueCAD, TotContributionsCAD, configurations,
                 ResultTableCAD)
 
-        TimeHistoryCAD = DBRead(configurations, ResultTableCAD, dt.date.today())
-        TimeHistoryCAD, dailydeltaCAD = get_daily_variation(TimeHistoryCAD)
+        TimeHistoryCAD = timeHistoryRead(configurations, ResultTableCAD, dt.date.today())
+        dailydeltaCAD = getDailyVariation(TimeHistoryCAD)
 
-        DBWrite(date, TotValueUSD, TotContributionsUSD, configurations,
+        writeDBValue(date, TotValueUSD, TotContributionsUSD, configurations,
                 ResultTableUSD)
 
-        TimeHistoryUSD = DBRead(configurations, ResultTableUSD, dt.date.today())
-        TimeHistoryUSD, dailydeltaUSD = get_daily_variation(TimeHistoryUSD)
+        TimeHistoryUSD = timeHistoryRead(configurations, ResultTableUSD, dt.date.today())
+        dailydeltaUSD = getDailyVariation(TimeHistoryUSD)
 
         bodyCAD = 'Daily variation (CAD): $' + str(dailydeltaCAD.round(2)) + '\nTotal value of the portfolio: $' + str(TotValueCAD)
         bodyUSD = 'Daily variation (USD): $' + str(dailydeltaUSD.round(2)) + '\nTotal value of the portfolio: $' + str(TotValueUSD)
