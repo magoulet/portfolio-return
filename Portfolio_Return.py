@@ -105,7 +105,7 @@ def getPrice(tickers, date):
 
         return result[['ticker', 'Adj Close']].set_index('ticker')
     except:
-        print("Error getting breakpointbreakpointbreakpointbreakpointbreakpointbreakpointonline quotes...")
+        print("Error getting online quotes...")
         exit()
 
 
@@ -291,7 +291,7 @@ if __name__ == "__main__":
         ExtraInvest = args.rebalance
         broker = args.broker
         rebalCurrency = args.currency
-        rebalance(portfolio[rebalCurrency], float(ExtraInvest), broker,breakpoint rebalCurrency, date)
+        rebalance(portfolio[rebalCurrency], float(ExtraInvest), broker, rebalCurrency, date)
 
     FinishTime = time.time()
     if Timing:
