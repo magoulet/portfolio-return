@@ -163,8 +163,9 @@ def readDBContributions(config, table, date, currency):
 
 
 def timeHistoryRead(config, table, date):
-    sqlCommand = "SELECT * FROM %s WHERE date <= '%s' \
-                  ORDER BY Date desc LIMIT 1;" \
+    sqlCommand = "(SELECT * FROM %s WHERE date <= '%s' \
+                  ORDER BY Date desc LIMIT 2) \
+                  ORDER BY Date asc;" \
                   % (table, date)
     data = databaseHelper(sqlCommand, "Select", config)
     return data
