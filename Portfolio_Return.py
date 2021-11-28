@@ -4,55 +4,56 @@
 # Filtering a DF: df[df['Type'] == 'Contr']
 
 import argparse
-from botMsg import telegram_bot_sendtext as sendtext
-import chart_studio
-import chart_studio.plotly as py
 import datetime as dt
 import json
 import mysql.connector
 import numpy as np
 import os
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+import psutil
+import requests
 import time
 import yfinance as yf
 
 
-def getConfigurations():
+def getconfig():
     path = os.path.dirname(os.path.abspath(__file__))
     configurationFile = path + '/config.json'
-    configurations = json.loads(open(configurationFile).read())
+    config = json.loads(open(configurationFile).read())
 
-    return configurations
+    return config
 
 
-def ArgParser():
+def argParser():
     parser = argparse.ArgumentParser(description='Program Flags')
-    parser.add_argument('-o', help="Output to Database (determined in config.json). Otherwise output to stdout only", action="store_true", dest='dboutput', default=False)
     parser.add_argument('-d', help='Snapshot date - format YYYY-MM-DD', action="store", dest='date', default=False)
     parser.add_argument('-m', help='Sends notification message to user', action="store_true", dest='sendmail', default=False)
     parser.add_argument('-rebalance', help='Rebalances Portfolio', action="store", dest='rebalance', default=False)
     parser.add_argument('-curr', help='Selected rebalancing currency', action="store", dest='currency', default='CAD')
+    parser.add_argument('-broker', help='Selected rebalancing broker', action="store", dest='broker', default='dob')
     args = parser.parse_args()
 
     return args
 
 
-def read_contributions(SQLtable, date):
-    df = DBRead(configurations, SQLtable, date)
+def readContributions(table, date, currency):
+    df = readDBContributions(config, table, date, currency)
     return df
 
 
-def read_transactions(SQLtable, date):
-    df = DBRead(configurations, SQLtable, date)
+def readTransactions(table, date, currency):
+    df = readDBTransactions(config, table, date, currency)
 
     df.sort_values(by=['Date'], ascending=True, inplace=True)
+
+    # Adjust for stock splits
+    df['Units'] = df['Units'] * df['SplitRatio']
+    df['Price'] = df['Price'] / df['SplitRatio']
 
     # Add average cost basis
     df['PurchasePrice'] = df[['Units', 'Price']].apply(lambda x: x['Units']*x['Price'] if x['Units'] > 0 else 0, axis=1)
     df['Proceeds'] = df[['Units', 'Price']].apply(lambda x: -1*x['Units']*x['Price'] if x['Units'] < 0 else 0, axis=1)
-    df['CumulUnits'] = df.groupby(['Ticker'])['Units'].cumsum()
+    df['totUnits'] = df.groupby(['Ticker'])['Units'].cumsum()
 
     # Walk through df in historical order
     df = df.groupby('Ticker')
@@ -61,22 +62,22 @@ def read_transactions(SQLtable, date):
     for name, group in df:
         df2 = df.get_group(name).reset_index(drop=True)
 
-        df2.loc[0, 'SumPurchaseCost'] = df2.loc[0, 'PurchasePrice']
-        df2.loc[0, 'AvgCost'] = df2.loc[0, 'SumPurchaseCost'] / df2.loc[0, 'CumulUnits']
+        df2.loc[0, 'totPurchaseCost'] = df2.loc[0, 'PurchasePrice']
+        df2.loc[0, 'AvgCost'] = df2.loc[0, 'totPurchaseCost'] / df2.loc[0, 'totUnits']
 
         for index, row in df2.iterrows():
             if index > 0:
                 # Buy order
                 if row['Units'] > 0:
-                    df2.loc[index, 'SumPurchaseCost'] = df2.loc[index, 'PurchasePrice'] + df2.loc[index-1, 'SumPurchaseCost']
-                    df2.loc[index, 'AvgCost'] = df2.loc[index, 'SumPurchaseCost'] / df2.loc[index, 'CumulUnits']
+                    df2.loc[index, 'totPurchaseCost'] = df2.loc[index, 'PurchasePrice'] + df2.loc[index-1, 'totPurchaseCost']
+                    df2.loc[index, 'AvgCost'] = df2.loc[index, 'totPurchaseCost'] / df2.loc[index, 'totUnits']
                     df2.loc[index, 'CostBasis'] = np.nan
                     df2.loc[index, 'RealGain'] = np.nan
 
                 # Sell order
                 else:
                     df2.loc[index, 'AvgCost'] = df2.loc[index-1, 'AvgCost']
-                    df2.loc[index, 'SumPurchaseCost'] = df2.loc[index, 'CumulUnits'] * df2.loc[index, 'AvgCost']
+                    df2.loc[index, 'totPurchaseCost'] = df2.loc[index, 'totUnits'] * df2.loc[index, 'AvgCost']
                     df2.loc[index, 'CostBasis'] = -1 * df2.loc[index, 'AvgCost'] * df2.loc[index, 'Units']
                     df2.loc[index, 'RealGain'] = df2.loc[index, 'Proceeds'] - df2.loc[index, 'CostBasis']
 
@@ -84,7 +85,7 @@ def read_transactions(SQLtable, date):
     return result
 
 
-def get_price(tickers, date):
+def getPrice(tickers, date):
     '''
     Expected format:
                         Price
@@ -95,14 +96,13 @@ def get_price(tickers, date):
     '''
     try:
         print("Getting prices for : ", tickers)
-        print("Date: ", date)
-        df = yf.download(tickers, start=date, end=date+dt.timedelta(days=1), group_by='Ticker')
+        df = yf.download(tickers, start=date, end=date+dt.timedelta(days=1),
+                        group_by='Ticker')
         if df.empty:
             print('DataFrame is empty!')
             exit()
-        # quotes = web.DataReader(tickers, 'yahoo',  end-dt.timedelta(days=2), end)
-        # quotes = web.DataReader(ticker, 'av-daily', start, end,api_key="0M2357MRIZDYTSJD")
-        result = df[:1].stack(level=0).rename_axis(['date', 'ticker']).reset_index(level=1)
+        result = df[:1].stack(level=0).rename_axis(['date', 'ticker']) \
+            .reset_index(level=1)
 
         return result[['ticker', 'Adj Close']].set_index('ticker')
     except:
@@ -110,13 +110,15 @@ def get_price(tickers, date):
         exit()
 
 
-def DatabaseHelper(sqlCommand, sqloperation, configurations):
-    host = configurations["mysql"][0]["host"]
-    user = configurations["mysql"][0]["user"]
-    password = configurations["mysql"][0]["password"]
-    database = configurations["mysql"][0]["database"]
+def databaseHelper(sqlCommand, sqloperation, config):
+    host = config["mysql"][0]["host"]
+    user = config["mysql"][0]["user"]
+    password = config["mysql"][0]["password"]
+    database = config["mysql"][0]["database"]
 
-    my_connect = mysql.connector.connect(host=host, user=user, password=password, database=database)
+    my_connect = mysql.connector.connect(host=host, user=user,
+                                        password=password,
+                                        database=database)
     cursor = my_connect.cursor()
 
     if sqloperation == "Select":
@@ -136,108 +138,106 @@ def DatabaseHelper(sqlCommand, sqloperation, configurations):
     return data
 
 
-def DBWrite(end, TotValue, TotContributions, configurations, table):
-    sqlCommand = "INSERT INTO %s VALUES ('%s', '%s', '%s') ON DUPLICATE KEY UPDATE value=VALUES(value), contributions=VALUES(contributions);" % (table, end, TotValue, TotContributions)
-    DatabaseHelper(sqlCommand, "Insert", configurations)
+def writeDBValue(end, TotValue, TotContributions, config, table):
+    sqlCommand = "INSERT INTO %s VALUES ('%s', '%s', '%s') ON DUPLICATE KEY \
+                 UPDATE value=VALUES(value), \
+                 contributions=VALUES(contributions);" \
+                 % (table, end, TotValue, TotContributions)
+    databaseHelper(sqlCommand, "Insert", config)
     return None
 
 
-def DBRead(configurations, table, date):
-    sqlCommand = "SELECT * FROM %s WHERE Date <= '%s';" % (table, date)
-    data = DatabaseHelper(sqlCommand, "Select", configurations)
+def readDBTransactions(config, table, date, currency):
+    sqlCommand = "SELECT * FROM %s WHERE Date <= '%s' \
+                  AND LOWER(Currency) = '%s';" \
+                  % (table, date, currency)
+    data = databaseHelper(sqlCommand, "Select", config)
     return data
 
 
-def get_daily_variation(df):
+def readDBContributions(config, table, date, currency):
+    sqlCommand = "SELECT * FROM %s WHERE Date <= '%s' \
+                 AND LOWER(currency) = '%s';" \
+                 % (table, date, currency)
+    data = databaseHelper(sqlCommand, "Select", config)
+    return data
+
+
+def timeHistoryRead(config, table, date):
+    sqlCommand = "(SELECT * FROM %s WHERE date <= '%s' \
+                  ORDER BY Date desc LIMIT 2) \
+                  ORDER BY Date asc;" \
+                  % (table, date)
+    data = databaseHelper(sqlCommand, "Select", config)
+    return data
+
+
+def getDailyVariation(df):
     df['daily variation'] = df['value'].diff()
     dailydelta = df['daily variation'].iloc[-1]
-    return df, dailydelta
+    return dailydelta
 
 
-def plot_results(df):
-
-    # your api key - go to profile > settings > regenerate key
-    chart_studio.tools.set_credentials_file(username=username, api_key=api_key)
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df['date'], y=df['value'],
-                             mode='lines',
-                             name='Portfolio Value'))
-
-    fig.add_trace(go.Scatter(x=df['date'], y=df['contributions'],
-                             mode='lines',
-                             name='Total Contributions'))
-
-    fig.update_layout(title='Total Portfolio Value',
-                      xaxis_title='Date',
-                      yaxis_title='Value (CAD)')
-
-    fig.update_layout(xaxis_range=['2019-09-01', dt.date.today()])
-    # fig.update_xaxes(
-    #     range=['2019-09-01',dt.date.today()],
-    #     constrain="domain"
-    # )
-    fig.update_yaxes(
-        range=[df['value'].truncate(before='2019-09-01').min(), df['value'].max()+10000],
-        constrain="domain"
-    )
-
-    # fig.show()
-    py.plot(fig, filename='portfolio', auto_open=False)
-
-
-def plot_assets_distribution(df):
-    df = df.query('Broker == "dob"')
-    df.reset_index(inplace=True)
-    fig = px.pie(df, values='Value', names='AssetClass', title='Self-Managed Asset Distribution')
-    # fig.show()
-    py.plot(fig, filename='portfolio_distribution', auto_open=False)
-    # Reference: https://plotly.com/python/pie-charts/
-
-
-def rebalance(df, ExtraCash, currency, end):
-    print('\nRebalancing Portfolio with ${:,.0f} extra cash\n'.format(ExtraCash))
+def rebalance(df, ExtraCash, broker, currency, end):
+    print('\nRebalancing Portfolio with ${:,.0f} extra cash\n'
+        .format(ExtraCash))
     # Current weight
     # Sort by AssetClass
-    df = df[df['Currency'] == currency]
-    Weight = df.pivot_table(index='AssetClass', values=['Value'], aggfunc=np.sum)
+    df = df[df['Broker'] == broker]
+    Weight = df.pivot_table(index='AssetClass', values=['Value'], \
+        aggfunc=np.sum)
     TargetWeight = pd.read_csv('target_weight.csv')
-    Weight = pd.merge(Weight, TargetWeight[TargetWeight['Currency'] == currency], on='AssetClass', how='inner')
+    Weight = pd.merge(Weight, TargetWeight[TargetWeight['Currency'] == \
+        currency], on='AssetClass', how='inner')
     Weight['CurrWeight'] = Weight['Value'] / Weight['Value'].sum() * 100
 
     # Delta
-    Weight['TargetPositions'] = Weight['TargetWeight'] * Weight['Value'].sum() / 100
+    Weight['TargetPositions'] = Weight['TargetWeight'] * \
+        Weight['Value'].sum() / 100
     Weight['DeltaPositions'] = Weight['TargetPositions'] - Weight['Value']
     Weight['Extra'] = Weight['TargetWeight'] * ExtraCash / 100
     Weight['Delta'] = Weight['Extra'] + Weight['DeltaPositions']
-    # ~ print(Weight)
-    # ~ print(Weight.columns)
-    # ~ input("debug 1...")
 
     # Merge the price column to the Weight dataframe
-    Weight = pd.merge(Weight, df[['Ticker', 'Price']], left_on='Ticker', right_on='Ticker', how='inner')
+    Weight = pd.merge(Weight, df[['Ticker', 'Adj Close']], left_on='Ticker', \
+        right_on='Ticker', how='inner')
 
-    Weight['NumUnits'] = (Weight['Delta'] / Weight['Price']).round(4)
+    Weight['NumUnits'] = (Weight['Delta'] / Weight['Adj Close']).round(4)
 
     print('\nPortfolio Rebalance:')
     print(Weight)
 
 
+def telegramNotification(cfg, body):
+
+    url = 'https://api.telegram.org/bot{0}/{1}'.format(cfg['token'],
+                                                       cfg['method'])
+    params = {
+        'chat_id': cfg['chat_id'],
+        'parse_mode': 'Markdown',
+        'text': body
+    }
+
+    response = requests.post(url=url, params=params).json()
+
+    return response
+
 if __name__ == "__main__":
+    process = psutil.Process(os.getpid())
     StartTime = time.time()
 
-    configurations = getConfigurations()
-    username = configurations["plotly"][0]["user"]
-    api_key = configurations["plotly"][0]["api"]
-    DownloadOnly = eval(configurations["misc"][0]["DownloadOnly"])
-    OfflineData = eval(configurations["misc"][0]["OfflineData"])
-    Timing = eval(configurations["misc"][0]["Timing"])
-    TransactionTable = configurations["mysql"][0]["TransactionTable"]
-    ContributionTable = configurations["mysql"][0]["ContributionTable"]
-    ResultTableCAD = configurations["mysql"][0]["ResultTableCAD"]
-    ResultTableUSD = configurations["mysql"][0]["ResultTableUSD"]
+    config = getconfig()
+    username = config["plotly"][0]["user"]
+    api_key = config["plotly"][0]["api"]
+    DownloadOnly = eval(config["misc"][0]["DownloadOnly"])
+    OfflineData = eval(config["misc"][0]["OfflineData"])
+    Timing = eval(config["misc"][0]["Timing"])
+    dataTable = {'contributions': config["mysql"][0]["ContributionTable"],
+                 'trades': config["mysql"][0]["TransactionTable"]}
+    resultTable = {'CAD': config["mysql"][0]["ResultTableCAD"],
+                   'USD': config["mysql"][0]["ResultTableUSD"]}
 
-    args = ArgParser()
+    args = argParser()
 
     if args.date:
         try:
@@ -248,79 +248,71 @@ if __name__ == "__main__":
     else:
         date = dt.date.today()
 
-    # if not marketopen(date):
-    #     print("Markets closed on the chosen day!")
-    #     quit()
+    portfolio = {}
+    contributions = {}
+    currencies = ['CAD','USD']
 
-    df = read_transactions(TransactionTable, date)
-    portfolio = df.pivot_table(index=['Ticker', 'Broker', 'AssetClass', 'Currency'], values=['CumulUnits', 'SumPurchaseCost', 'RealGain'], aggfunc={'CumulUnits': 'last', 'SumPurchaseCost': 'last', 'RealGain': 'sum'}, fill_value=0)
+    for currency in currencies:
+        df = readTransactions(dataTable['trades'], date, currency)
+        portfolio[currency] = df.pivot_table(index=['Ticker', 'Broker', 'AssetClass', 'Currency'], values=['totUnits', 'totPurchaseCost', 'RealGain'], aggfunc={'totUnits': 'last', 'totPurchaseCost': 'last', 'RealGain': 'sum'}, fill_value=0)
 
-    portfolio.reset_index(inplace=True)
+        portfolio[currency].reset_index(inplace=True)
+        TotRealGain = portfolio[currency]['RealGain'].sum().round(2)
 
-    TotRealGainCAD = portfolio[portfolio['Currency'] == 'CAD']['RealGain'].sum().round(2)
-    TotRealGainUSD = portfolio[portfolio['Currency'] == 'USD']['RealGain'].sum().round(2)
+        # Remove tickers with 0 units
+        portfolio[currency] = portfolio[currency][portfolio[currency]['totUnits'] != 0]
 
-    # Remove tickers with 0 units
-    portfolio = portfolio[portfolio['CumulUnits'] != 0]
+        print("Getting online quotes...")
+        tickers = portfolio[currency]['Ticker'].to_list()
+        prices = getPrice(tickers, date)
+        portfolio[currency] = pd.merge(portfolio[currency], prices, left_on='Ticker', right_on='ticker', how='inner')
 
-    print("Getting online quotes...")
-    tickers = portfolio['Ticker'].to_list()
-    prices = get_price(tickers, date)
-    portfolio = pd.merge(portfolio, prices, left_on='Ticker', right_on='ticker', how='inner')
+        # Portfolio Value
+        portfolio[currency]['Value'] = portfolio[currency]['Adj Close'] * portfolio[currency]['totUnits']
+        TotValue = portfolio[currency]['Value'].sum().round(2)
 
-    # Portfolio Value
-    portfolio['Value'] = portfolio['Adj Close'] * portfolio['CumulUnits']
-    TotValueCAD = portfolio[portfolio['Currency'] == 'CAD']['Value'].sum().round(2)
-    TotValueUSD = portfolio[portfolio['Currency'] == 'USD']['Value'].sum().round(2)
+        # Unrealized Gain/Loss
+        portfolio[currency]['unrealizedGainPerc'] = (portfolio[currency]['Value'] - portfolio[currency]['totPurchaseCost']) / portfolio[currency]['totPurchaseCost'] * 100
+        portfolio[currency]['totUnrealizedGain'] = portfolio[currency]['Value'] - portfolio[currency]['totPurchaseCost']
+        portfolio[currency].sort_values(by=['totUnrealizedGain'], inplace=True)
+        TotUnrealGain = portfolio[currency]['totUnrealizedGain'].sum().round(2)
 
-    # Unrealized Gain/Loss
-    portfolio['UnrealGainPerc'] = (portfolio['Value'] - portfolio['SumPurchaseCost']) / portfolio['SumPurchaseCost'] * 100
-    portfolio['TotalUnrealGain'] = portfolio['Value'] - portfolio['SumPurchaseCost']
-    portfolio.sort_values(by=['TotalUnrealGain'], inplace=True)
-    TotUnrealGainCAD = portfolio[portfolio['Currency'] == 'CAD']['TotalUnrealGain'].sum().round(2)
-    TotUnrealGainUSD = portfolio[portfolio['Currency'] == 'USD']['TotalUnrealGain'].sum().round(2)
+        # Contributions to date
+        contributions['currency'] = readContributions(dataTable['contributions'], date, currency)
+        TotContributions = contributions['currency']['contribution'].sum()
 
-    # Contributions to date
-    Contributions = read_contributions(ContributionTable, date)
-    TotContributionsCAD = Contributions[Contributions['currency'] == 'CAD']['contribution'].sum()
-    TotContributionsUSD = Contributions[Contributions['currency'] == 'USD']['contribution'].sum()
+        print('\n*** Summary ({}): ***'.format(currency))
+        print('Total Contributions: ${:,.0f}\n'
+                'Total Value: ${:,.0f}\n'
+                'Total Unrealized Gain: ${:,.0f}\n'
+                'Total Realized Gain: ${:,.0f}\n\n'
+                .format(TotContributions, TotValue, TotUnrealGain, TotRealGain))
+        print(portfolio[currency].round(2))
 
-    print('\n*** Summary (CAD): ***')
-    print('Total Contributions: ${:,.0f}\nTotal Value: ${:,.0f}\nTotal Unrealized Gain: ${:,.0f}\nTotal Realized Gain: ${:,.0f}\n\n'.format(TotContributionsCAD, TotValueCAD, TotUnrealGainCAD, TotRealGainCAD))
-    print(portfolio[portfolio['Currency'] == 'CAD'].round(2))
+        print("Writing to the DB...")
+        writeDBValue(date, TotValue, TotContributions, config,
+                resultTable[currency])
 
-    print('\n*** Summary (USD): ***')
-    print('Total Contributions: ${:,.0f}\nTotal Value: ${:,.0f}\nTotal Unrealized Gain: ${:,.0f}\nTotal Realized Gain: ${:,.0f}\n\n'.format(TotContributionsUSD, TotValueUSD, TotUnrealGainUSD, TotRealGainUSD))
-    print(portfolio[portfolio['Currency'] == 'USD'].round(2))
+        if args.sendmail:
+            TimeHistory = timeHistoryRead(config, resultTable[currency], dt.date.today())
+            dailydelta = getDailyVariation(TimeHistory)
+
+            body = 'Daily variation ('+currency+'): $' + str(dailydelta.round(2)) + '\nTotal value of the portfolio: $' + str(TotValue)
+
+            # sendmail(sender, to, subject, body)
+            print("Sending mail to user...")
+            telegramNotification(config['telegram'][0], body)
+
+
 
     if args.rebalance:
         ExtraInvest = args.rebalance
-        currency = args.currency
-        rebalance(portfolio, float(ExtraInvest), currency, date)
-
-    if args.dboutput:
-        print("Writing to the DB...")
-        DBWrite(date, TotValueCAD, TotContributionsCAD, configurations,
-                ResultTableCAD)
-
-        TimeHistoryCAD = DBRead(configurations, ResultTableCAD, dt.date.today())
-        TimeHistoryCAD, dailydeltaCAD = get_daily_variation(TimeHistoryCAD)
-
-        DBWrite(date, TotValueUSD, TotContributionsUSD, configurations,
-                ResultTableUSD)
-
-        TimeHistoryUSD = DBRead(configurations, ResultTableUSD, dt.date.today())
-        TimeHistoryUSD, dailydeltaUSD = get_daily_variation(TimeHistoryUSD)
-
-        bodyCAD = 'Daily variation (CAD): $' + str(dailydeltaCAD.round(2)) + '\nTotal value of the portfolio: $' + str(TotValueCAD)
-        bodyUSD = 'Daily variation (USD): $' + str(dailydeltaUSD.round(2)) + '\nTotal value of the portfolio: $' + str(TotValueUSD)
-
-        if args.sendmail:
-            # sendmail(sender, to, subject, body)
-            print("Sending mail to user...")
-            sendtext(bodyCAD)
-            sendtext(bodyUSD)
+        broker = args.broker
+        rebalCurrency = args.currency
+        rebalance(portfolio[rebalCurrency], float(ExtraInvest), broker, rebalCurrency, date)
 
     FinishTime = time.time()
+    print('Total memory usage: {:,.0f} kb'.format(float(process.memory_info().rss)/1000))  # in bytes
+
     if Timing:
         print("Total Execution Time: ", FinishTime-StartTime)
