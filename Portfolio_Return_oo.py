@@ -4,14 +4,14 @@
 # Filtering a DF: df[df['Type'] == 'Contr']
 
 import argparse
-from botMsg import telegram_bot_sendtext as sendtext
 import datetime as dt
 import json
-import math
 import mysql.connector
 import numpy as np
 import os
+import psutil
 import pandas as pd
+import requests
 import time
 import yfinance as yf
 from portfolio_classes import Security
@@ -168,7 +168,23 @@ def rebalance(df, ExtraCash, broker, currency, end):
     print(Weight)
 
 
+def telegramNotification(cfg, body):
+
+    url = 'https://api.telegram.org/bot{0}/{1}'.format(cfg['token'],
+                                                       cfg['method'])
+    params = {
+        'chat_id': cfg['chat_id'],
+        'parse_mode': 'Markdown',
+        'text': body
+    }
+
+    response = requests.post(url=url, params=params).json()
+
+    return response
+
+
 if __name__ == "__main__":
+    process = psutil.Process(os.getpid())
     StartTime = time.time()
 
     configurations = getConfigurations()
@@ -212,8 +228,7 @@ if __name__ == "__main__":
         totValue = 0
         totMoneyIn = 0
         totRealGain = 0
-        breakpoint()
-        
+
         for key, value in portfolio.items():
             if value.qty > 0:
                 value.price = prices['Adj Close'][key]
@@ -253,7 +268,8 @@ if __name__ == "__main__":
             if args.sendmail:
                 # sendmail(sender, to, subject, body)
                 print("Sending mail to user...")
-                sendtext(body)
+                telegramNotification(config['telegram'][0], body)
+
 
     if args.rebalance:
         ExtraInvest = args.rebalance
@@ -262,5 +278,7 @@ if __name__ == "__main__":
         rebalance(portfolio, float(ExtraInvest), broker, rebalCurrency, date)
 
     FinishTime = time.time()
+    print('Total memory usage: {:,.0f} kb'.format(float(process.memory_info().rss)/1000))  # in bytes
+
     if Timing:
         print("Total Execution Time: ", FinishTime-StartTime)
