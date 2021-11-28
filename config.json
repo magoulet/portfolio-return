@@ -20,5 +20,10 @@
 	"DownloadOnly":"False",
 	"OfflineData":"False",
 	"Timing":"True"
+	}],
+"telegram":[{
+	"token":"1048173690:AAGvugosczAuc0ccQAb-Fyut2SjgF713Mn4",
+	"method":"sendMessage",
+	"chat_id":"1052843176"
 	}]
 }

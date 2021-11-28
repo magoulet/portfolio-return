@@ -4,13 +4,14 @@
 # Filtering a DF: df[df['Type'] == 'Contr']
 
 import argparse
-from botMsg import telegram_bot_sendtext as sendtext
 import datetime as dt
 import json
 import mysql.connector
 import numpy as np
 import os
 import pandas as pd
+import psutil
+import requests
 import time
 import yfinance as yf
 
@@ -207,7 +208,22 @@ def rebalance(df, ExtraCash, broker, currency, end):
     print(Weight)
 
 
+def telegramNotification(cfg, body):
+
+    url = 'https://api.telegram.org/bot{0}/{1}'.format(cfg['token'],
+                                                       cfg['method'])
+    params = {
+        'chat_id': cfg['chat_id'],
+        'parse_mode': 'Markdown',
+        'text': body
+    }
+
+    response = requests.post(url=url, params=params).json()
+
+    return response
+
 if __name__ == "__main__":
+    process = psutil.Process(os.getpid())
     StartTime = time.time()
 
     config = getconfig()
@@ -285,7 +301,8 @@ if __name__ == "__main__":
 
             # sendmail(sender, to, subject, body)
             print("Sending mail to user...")
-            sendtext(body)
+            telegramNotification(config['telegram'][0], body)
+
 
 
     if args.rebalance:
@@ -295,5 +312,7 @@ if __name__ == "__main__":
         rebalance(portfolio[rebalCurrency], float(ExtraInvest), broker, rebalCurrency, date)
 
     FinishTime = time.time()
+    print('Total memory usage: {:,.0f} kb'.format(float(process.memory_info().rss)/1000))  # in bytes
+
     if Timing:
         print("Total Execution Time: ", FinishTime-StartTime)
