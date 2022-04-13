@@ -8,6 +8,7 @@ import datetime as dt
 import json
 import mysql.connector
 import numpy as np
+import operator
 import os
 import psutil
 import pandas as pd
@@ -42,7 +43,7 @@ def readContributions(SQLtable, date, currency):
 
 
 def readTransactions(SQLtable, date, currency):
-    portfolio = []
+    portfolio = {}
     tickers = []
 
     df = DBRead(configurations, SQLtable, date, currency)
@@ -213,7 +214,7 @@ if __name__ == "__main__":
     #     print("Markets closed on the chosen day!")
     #     quit()
 
-    currencies = ['CAD','USD']
+    currencies = ['CAD', 'USD']
 
     for currency in currencies:
         portfolio = readTransactions(TransactionTable, date, currency)
@@ -222,16 +223,17 @@ if __name__ == "__main__":
         tickers = []
         for key, value in portfolio.items():
             if value.qty > 0:
-                tickers.append(key)
+                tickers.append(value.ticker)
         prices = get_price(tickers, date)
 
         totValue = 0
         totMoneyIn = 0
         totRealGain = 0
 
+        # for key, value in portfolio.items():
         for key, value in portfolio.items():
             if value.qty > 0:
-                value.price = prices['Adj Close'][key]
+                value.price = prices['Adj Close'][value.ticker]
                 value.UnrealizedReturn = (value.price - value.costBasis)/ value.costBasis * 100
                 value.totUnrealizedReturn = value.qty * (value.price - value.costBasis)
                 totValue += value.qty * value.price
@@ -244,7 +246,7 @@ if __name__ == "__main__":
 
 
         print ("{:<8} {:>8} {:>8} {:>12} {:>12} {:>8} {:>12} {:>12}".format('Ticker','Qty','Price','Real. Gain','Cost Basis','Value','Unreal. Gain {%}','Unreal. Gain ($)'))
-        for k, v in portfolio.items():
+        for v in sorted(portfolio.values(), key=operator.attrgetter('totUnrealizedReturn')):
             if v.qty > 0:
                 print("{:<8} {:>8.2f} {:>8.2f} {:>12.2f} {:>12.2f} {:>8.2f} {:>12.2f} {:>12.2f}".format(v.ticker, v.qty, v.price, v.realGain, v.qty*v.costBasis, v.price*v.qty, v.UnrealizedReturn, v.totUnrealizedReturn))
 
@@ -255,20 +257,18 @@ if __name__ == "__main__":
         print('\n*** Summary ({}): ***'.format(currency))
         print('Total Contributions: ${:,.0f}\nTotal Value: ${:,.0f}\nTotal Unrealized Gain: ${:,.0f}\nTotal Realized Gain: ${:,.0f}\n\n'.format(TotContributions, totValue, totUnrealizedReturn, totRealGain))
 
-        if args.dboutput:
-            print("Writing to the DB...")
-            writeDBValue(date, totValue, TotContributions, configurations,
-                    currency+'data')
+        print("Writing to the DB...")
+        writeDBValue(date, totValue, TotContributions, configurations,
+                currency+'data')
 
+        if args.sendmail:
             timeHistory = timeHistoryRead(configurations, currency+'data', dt.date.today())
             dailyDelta = get_daily_variation(timeHistory)
 
             body = 'Daily variation (currency): $' + str(dailyDelta.round(2)) + '\nTotal value of the portfolio: $' + str(totValue)
 
-            if args.sendmail:
-                # sendmail(sender, to, subject, body)
-                print("Sending mail to user...")
-                telegramNotification(config['telegram'][0], body)
+            print("Sending mail to user...")
+            telegramNotification(config['telegram'][0], body)
 
 
     if args.rebalance:
