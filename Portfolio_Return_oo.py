@@ -128,7 +128,10 @@ def DBRead(configurations, table, date, currency):
 
 
 def timeHistoryRead(configurations, table, date):
-    sqlCommand = "SELECT * FROM %s WHERE date <= '%s' ORDER BY Date desc LIMIT 1;" % (table.lower(), date)
+    sqlCommand = "(SELECT * FROM %s WHERE date <= '%s' \
+                  ORDER BY Date desc LIMIT 2) \
+                  ORDER BY Date asc;" \
+                  % (table.lower(), date)
     data = DatabaseHelper(sqlCommand, "Select", configurations)
     return data
 
@@ -258,17 +261,16 @@ if __name__ == "__main__":
         print('Total Contributions: ${:,.0f}\nTotal Value: ${:,.0f}\nTotal Unrealized Gain: ${:,.0f}\nTotal Realized Gain: ${:,.0f}\n\n'.format(TotContributions, totValue, totUnrealizedReturn, totRealGain))
 
         print("Writing to the DB...")
-        writeDBValue(date, totValue, TotContributions, configurations,
+        writeDBValue(date, round(totValue,2), TotContributions, configurations,
                 currency+'data')
 
         if args.sendmail:
             timeHistory = timeHistoryRead(configurations, currency+'data', dt.date.today())
             dailyDelta = get_daily_variation(timeHistory)
-
-            body = 'Daily variation (currency): $' + str(dailyDelta.round(2)) + '\nTotal value of the portfolio: $' + str(totValue)
+            body = 'Daily variation (currency): $' + str(dailyDelta.round(2)) + '\nTotal value of the portfolio: $' + str(round(totValue,2))
 
             print("Sending mail to user...")
-            telegramNotification(config['telegram'][0], body)
+            telegramNotification(configurations['telegram'][0], body)
 
 
     if args.rebalance:
