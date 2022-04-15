@@ -145,3 +145,7 @@ cython_debug/
 *.yml
 *.json
 *.csv
+
+# Other
+*.txt
+*.ods
