@@ -28,11 +28,16 @@ def getconfig():
 
 def argParser():
     parser = argparse.ArgumentParser(description='Program Flags')
-    parser.add_argument('-d', help='Snapshot date - format YYYY-MM-DD', action="store", dest='date', default=False)
-    parser.add_argument('-m', help='Sends notification message to user', action="store_true", dest='sendmail', default=False)
-    parser.add_argument('-rebalance', help='Rebalances Portfolio', action="store", dest='rebalance', default=False)
-    parser.add_argument('-curr', help='Selected rebalancing currency', action="store", dest='currency', default='CAD')
-    parser.add_argument('-broker', help='Selected rebalancing broker', action="store", dest='broker', default='dob')
+    parser.add_argument('-d', help='Snapshot date - format YYYY-MM-DD',
+                        action="store", dest='date', default=False)
+    parser.add_argument('-m', help='Sends notification message to user',
+                        action="store_true", dest='sendmail', default=False)
+    parser.add_argument('-rebalance', help='Rebalances Portfolio',
+                        action="store", dest='rebalance', default=False)
+    parser.add_argument('-curr', help='Selected rebalancing currency',
+                        action="store", dest='currency', default='CAD')
+    parser.add_argument('-broker', help='Selected rebalancing broker',
+                        action="store", dest='broker', default='dob')
     args = parser.parse_args()
 
     return args
@@ -48,26 +53,22 @@ def readTransactions(table, date, currency):
     portfolio = {}
     tickers = []
 
-
     # Adjust for stock splits
     df['Units'] = df['Units'] * df['SplitRatio']
     df['Price'] = df['Price'] / df['SplitRatio']
 
-
     tickers = df['Ticker'].unique().tolist()
 
     portfolio = {ticker: Security(ticker) for ticker in tickers}
-
-
     # Walk through the df
-    for column, row in df.iterrows():
+    df_dict = df.to_dict('records')
+    for row in df_dict:
         if row['Type'].lower() == 'buy':
-            portfolio[row['Ticker']].buy(row['Units'],row['Price'])
+            portfolio[row['Ticker']].buy(row['Units'], row['Price'])
         elif row['Type'].lower() == 'sell':
-            portfolio[row['Ticker']].sell(-1*row['Units'],row['Price'],row['Fees'])
-
+            portfolio[row['Ticker']].sell(-1*row['Units'], row['Price'],
+                                          row['Fees'])
     return portfolio
-
 
 
 def getPrice(tickers, date):
@@ -82,7 +83,7 @@ def getPrice(tickers, date):
     try:
         print("Getting prices for : ", tickers)
         df = yf.download(tickers, start=date, end=date+dt.timedelta(days=1),
-                        group_by='Ticker')
+                         group_by='Ticker')
         if df.empty:
             print('DataFrame is empty!')
             exit()
@@ -102,8 +103,8 @@ def databaseHelper(sqlCommand, sqloperation, config):
     database = config["mysql"][0]["database"]
 
     my_connect = mysql.connector.connect(host=host, user=user,
-                                        password=password,
-                                        database=database)
+                                         password=password,
+                                         database=database)
     cursor = my_connect.cursor()
 
     if sqloperation == "Select":
@@ -165,15 +166,15 @@ def getDailyVariation(df):
 
 def rebalance(df, ExtraCash, broker, currency, end):
     print('\nRebalancing Portfolio with ${:,.0f} extra cash\n'
-        .format(ExtraCash))
+          .format(ExtraCash))
     # Current weight
     # Sort by AssetClass
     df = df[df['Broker'] == broker]
-    Weight = df.pivot_table(index='AssetClass', values=['Value'], \
-        aggfunc=np.sum)
+    Weight = df.pivot_table(index='AssetClass', values=['Value'],
+                            aggfunc=np.sum)
     TargetWeight = pd.read_csv('target_weight.csv')
-    Weight = pd.merge(Weight, TargetWeight[TargetWeight['Currency'] == \
-        currency], on='AssetClass', how='inner')
+    Weight = pd.merge(Weight, TargetWeight[TargetWeight['Currency'] ==
+                      currency], on='AssetClass', how='inner')
     Weight['CurrWeight'] = Weight['Value'] / Weight['Value'].sum() * 100
 
     # Delta
@@ -184,8 +185,8 @@ def rebalance(df, ExtraCash, broker, currency, end):
     Weight['Delta'] = Weight['Extra'] + Weight['DeltaPositions']
 
     # Merge the price column to the Weight dataframe
-    Weight = pd.merge(Weight, df[['Ticker', 'Adj Close']], left_on='Ticker', \
-        right_on='Ticker', how='inner')
+    Weight = pd.merge(Weight, df[['Ticker', 'Adj Close']], left_on='Ticker',
+                      right_on='Ticker', how='inner')
 
     Weight['NumUnits'] = (Weight['Delta'] / Weight['Adj Close']).round(4)
 
@@ -207,8 +208,10 @@ def telegramNotification(cfg, body):
 
     return response
 
+
 if __name__ == "__main__":
     process = psutil.Process(os.getpid())
+    execTime = 0
     StartTime = time.time()
 
     config = getconfig()
@@ -235,16 +238,18 @@ if __name__ == "__main__":
 
     portfolio = {}
     contributions = {}
-    currencies = ['CAD','USD']
+    currencies = ['CAD', 'USD']
 
     for currency in currencies:
-        portfolio[currency] = readTransactions(dataTable['trades'], date, currency)
+        portfolio[currency] = readTransactions(dataTable['trades'], date,
+                                               currency)
 
         print("Getting online quotes...")
         tickers = []
         for key, value in portfolio[currency].items():
             if value.qty > 0:
                 tickers.append(value.ticker)
+
         prices = getPrice(tickers, date)
 
         totValue = 0
@@ -255,57 +260,74 @@ if __name__ == "__main__":
         for key, value in portfolio[currency].items():
             if value.qty > 0:
                 value.price = prices['Adj Close'][value.ticker]
-                value.UnrealizedReturn = (value.price - value.costBasis)/ value.costBasis * 100
-                value.totUnrealizedReturn = value.qty * (value.price - value.costBasis)
+                value.UnrealizedReturn = (value.price - value.costBasis) / \
+                    value.costBasis * 100
+                value.totUnrealizedReturn = value.qty * (value.price -
+                                                         value.costBasis)
                 totValue += value.qty * value.price
                 totMoneyIn += value.moneyIn
                 totRealGain += value.realGain
             else:
                 totRealGain += value.realGain
-        totUnrealizedReturn  = totValue - totMoneyIn
+        totUnrealizedReturn = totValue - totMoneyIn
         percUnrealizedReturn = (totValue - totMoneyIn) / totMoneyIn * 100
 
-
-        print ("{:<8} {:>8} {:>8} {:>12} {:>12} {:>8} {:>12} {:>12}".format('Ticker','Qty','Price','Real. Gain','Cost Basis','Value','Unreal. Gain {%}','Unreal. Gain ($)'))
-        for v in sorted(portfolio[currency].values(), key=operator.attrgetter('totUnrealizedReturn')):
+        print("{:<8} {:>8} {:>8} {:>12} {:>12} {:>9} {:>12} {:>12}".
+              format('Ticker', 'Qty', 'Price', 'Real. Gain', 'Cost Basis',
+                     'Value', 'Unreal. Gain {%}', 'Unreal. Gain ($)'))
+        for v in sorted(portfolio[currency].values(), key=operator.
+                        attrgetter('totUnrealizedReturn')):
             if v.qty > 0:
-                print("{:<8} {:>8.2f} {:>8.2f} {:>12.2f} {:>12.2f} {:>8.2f} {:>12.2f} {:>12.2f}".format(v.ticker, v.qty, v.price, v.realGain, v.qty*v.costBasis, v.price*v.qty, v.UnrealizedReturn, v.totUnrealizedReturn))
+                print(('{:<8} {:>8.2f} {:>8.2f} {:>12.2f} {:>12.2f} {:>9.2f}'
+                      '{:>17.1f} {:>16.2f}').format(v.ticker, v.qty, v.price,
+                                                    v.realGain,
+                                                    v.qty*v.costBasis,
+                                                    v.price*v.qty,
+                                                    v.UnrealizedReturn,
+                                                    v.totUnrealizedReturn))
 
         # Contributions to date
-        contributions['currency'] = readContributions(dataTable['contributions'], date, currency)
+        contributions['currency'] = readContributions(
+            dataTable['contributions'], date, currency)
         TotContributions = contributions['currency']['contribution'].sum()
 
         print('\n*** Summary ({}): ***'.format(currency))
         print('Total Contributions: ${:,.0f}\n'
-                'Total Value: ${:,.0f}\n'
-                'Total Unrealized Gain: ${:,.0f}\n'
-                'Total Realized Gain: ${:,.0f}\n\n'
-                .format(TotContributions, totValue, totUnrealizedReturn, totRealGain))
+              'Total Value: ${:,.0f}\n'
+              'Total Unrealized Gain: ${:,.0f}\n'
+              'Total Realized Gain: ${:,.0f}\n\n'
+              .format(TotContributions, totValue, totUnrealizedReturn,
+                      totRealGain))
 
         print("Writing to the DB...")
-        writeDBValue(date, round(totValue,2), TotContributions, config,
-                resultTable[currency])
+        writeDBValue(date, round(totValue, 2), TotContributions, config,
+                     resultTable[currency])
 
         if args.sendmail:
-            TimeHistory = timeHistoryRead(config, resultTable[currency], dt.date.today())
+            TimeHistory = timeHistoryRead(config, resultTable[currency],
+                                          dt.date.today())
             dailydelta = getDailyVariation(TimeHistory)
 
-            body = 'Daily variation ('+currency+'): $' + str(dailydelta.round(2)) + '\nTotal value of the portfolio: $' + str(TotValue)
-
+            body = 'Daily variation ('+currency+'): $'\
+                + str(dailydelta.round(2))\
+                + '\nTotal value of the portfolio: $'\
+                + str(round(totValue, 2))
+            print(body)
             # sendmail(sender, to, subject, body)
             print("Sending mail to user...")
-            telegramNotification(config['telegram'][0], body)
-
-
+            # telegramNotification(config['telegram'][0], body)
 
     if args.rebalance:
         ExtraInvest = args.rebalance
         broker = args.broker
         rebalCurrency = args.currency
-        rebalance(portfolio[rebalCurrency], float(ExtraInvest), broker, rebalCurrency, date)
+        rebalance(portfolio[rebalCurrency], float(ExtraInvest), broker,
+                  rebalCurrency, date)
 
     FinishTime = time.time()
-    print('Total memory usage: {:,.0f} kb'.format(float(process.memory_info().rss)/1000))  # in bytes
+    execTime += FinishTime-StartTime
+    print('Total memory usage: {:,.0f} kb'.format(
+        float(process.memory_info().rss)/1000))  # in bytes
 
     if Timing:
-        print("Total Execution Time: ", FinishTime-StartTime)
+        print("Total Execution Time: ", execTime)
