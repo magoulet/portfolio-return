@@ -19,11 +19,15 @@
 "misc":[{
 	"DownloadOnly":"False",
 	"OfflineData":"False",
-	"Timing":"True"
+	"Timing":"True",
+	"Currencies":"['CAD', 'USD']"
 	}],
 "telegram":[{
 	"token":"1048173690:AAGvugosczAuc0ccQAb-Fyut2SjgF713Mn4",
 	"method":"sendMessage",
 	"chat_id":"1052843176"
+	}],
+"directories":[{
+	"pickles":"./pickles/"
 	}]
 }
