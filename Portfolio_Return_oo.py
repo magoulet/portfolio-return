@@ -11,6 +11,7 @@ import numpy as np
 import operator
 import os
 import pandas as pd
+import pickle
 import psutil
 import requests
 import time
@@ -48,7 +49,7 @@ def readContributions(table, date, currency):
     return df
 
 
-def readTransactions(table, date, currency):
+def readTransactions(table, date, currency, config):
     df = readDBTransactions(config, table, date, currency)
     portfolio = {}
     tickers = []
@@ -64,23 +65,32 @@ def readTransactions(table, date, currency):
     df_dict = df.to_dict('records')
     for row in df_dict:
         if row['Type'].lower() == 'buy':
-            portfolio[row['Ticker']].buy(row['Units'], row['Price'])
+            portfolio[row['Ticker']].buy(row['Units'], row['Price'], row['Date'])
         elif row['Type'].lower() == 'sell':
             portfolio[row['Ticker']].sell(-1*row['Units'], row['Price'],
-                                          row['Fees'])
+                                          row['Fees'], row['Date'])
     return portfolio
 
 
-def getPrice(tickers, date):
+def getPrice(tickers, date, path):
     '''
-    Expected format:
+    Expected output format from yf:
                         Price
     Attributes Symbols
     Adj Close  BNS.TO   67.870003
                CAE.TO   33.270000
                ...      ...
     '''
+    prices = {}
     try:
+        for ticker in tickers:
+            with open(path+ticker+'.pickle', 'rb') as file:
+                price = pickle.load(file).to_dict()
+                prices[ticker] = price['Adj Close'][pd.Timestamp(date)]
+
+        return {'Adj Close': prices}
+
+    except Exception:
         print("Getting prices for : ", tickers)
         df = yf.download(tickers, start=date, end=date+dt.timedelta(days=1),
                          group_by='Ticker')
@@ -91,9 +101,7 @@ def getPrice(tickers, date):
             .reset_index(level=1)
 
         return result[['ticker', 'Adj Close']].set_index('ticker').to_dict()
-    except:
-        print("Error getting online quotes...")
-        exit()
+
 
 
 def databaseHelper(sqlCommand, sqloperation, config):
@@ -224,6 +232,8 @@ if __name__ == "__main__":
                  'trades': config["mysql"][0]["TransactionTable"]}
     resultTable = {'CAD': config["mysql"][0]["ResultTableCAD"],
                    'USD': config["mysql"][0]["ResultTableUSD"]}
+    path = config["directories"][0]["pickles"]
+    currencies = eval(config['misc'][0]["Currencies"])
 
     args = argParser()
 
@@ -238,19 +248,17 @@ if __name__ == "__main__":
 
     portfolio = {}
     contributions = {}
-    currencies = ['CAD', 'USD']
 
     for currency in currencies:
         portfolio[currency] = readTransactions(dataTable['trades'], date,
-                                               currency)
+                                               currency, config)
 
-        print("Getting online quotes...")
         tickers = []
         for key, value in portfolio[currency].items():
             if value.qty > 0:
                 tickers.append(value.ticker)
 
-        prices = getPrice(tickers, date)
+        prices = getPrice(tickers, date, path)
 
         totValue = 0
         totMoneyIn = 0
@@ -315,7 +323,7 @@ if __name__ == "__main__":
             print(body)
             # sendmail(sender, to, subject, body)
             print("Sending mail to user...")
-            # telegramNotification(config['telegram'][0], body)
+            telegramNotification(config['telegram'][0], body)
 
     if args.rebalance:
         ExtraInvest = args.rebalance
