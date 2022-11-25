@@ -147,6 +147,5 @@ cython_debug/
 *.csv
 
 # Other
-*.txt
 *.ods
 *.pickle
