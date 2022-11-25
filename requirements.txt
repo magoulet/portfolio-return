@@ -1,0 +1,7 @@
+argparse
+mysql-connector
+numpy
+pandas
+psutil
+requests
+yfinance
