@@ -148,4 +148,4 @@ cython_debug/
 
 # Other
 *.ods
-*.pickle
+.idea/
