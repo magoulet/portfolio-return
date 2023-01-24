@@ -92,12 +92,13 @@ def getPrice(tickers, date, path):
 
     except Exception:
         print("Getting prices for : ", tickers)
-        df = yf.download(tickers, start=date, end=date+dt.timedelta(days=1),
+        df = yf.download(tickers, start=date-dt.timedelta(days=5), end=date+dt.timedelta(days=1),
                          group_by='Ticker')
         if df.empty:
             print('DataFrame is empty!')
             exit()
-        result = df[:1].stack(level=0).rename_axis(['date', 'ticker']) \
+        df.ffill(inplace=True) #fill missing values with most recent data
+        result = df[-1:].stack(level=0).rename_axis(['date', 'ticker']) \
             .reset_index(level=1)
 
         return result[['ticker', 'Adj Close']].set_index('ticker').to_dict()
