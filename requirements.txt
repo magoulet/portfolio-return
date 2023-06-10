@@ -3,5 +3,6 @@ mysql-connector
 numpy
 pandas
 psutil
+pyxirr
 requests
 yfinance
