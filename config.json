@@ -1,6 +1,6 @@
 {
 "mysql":[{
-	"host":"localhost",
+	"host":"raspberrypi1",
 	"user":"logger",
 	"password":"password",
 	"database":"portfolio",

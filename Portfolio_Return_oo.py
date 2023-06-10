@@ -16,8 +16,8 @@ import psutil
 import requests
 import time
 import yfinance as yf
-from portfolio_classes import Security
-
+from portfolio_classes import Security, Cashflows
+from pyxirr import xirr
 
 def getconfig():
     path = os.path.dirname(os.path.abspath(__file__))
@@ -45,8 +45,12 @@ def argParser():
 
 
 def readContributions(table, date, currency):
+    cashflows = Cashflows(currency)
     df = readDBContributions(config, table, date, currency)
-    return df
+    for index, row in df.iterrows():
+        cashflows.event(row.date, row.contribution)
+
+    return cashflows
 
 
 def readTransactions(table, date, currency, config):
@@ -132,6 +136,12 @@ def databaseHelper(sqlCommand, sqloperation, config):
     my_connect.close()
     return data
 
+
+def readDBValues(config, table):
+    sqlCommand = "SELECT date, value FROM %s;" \
+                 % (table)
+    data = databaseHelper(sqlCommand, "Select", config)
+    return data
 
 def writeDBValue(end, TotValue, TotContributions, config, table):
     sqlCommand = "INSERT INTO %s VALUES ('%s', '%s', '%s') ON DUPLICATE KEY \
@@ -296,17 +306,40 @@ if __name__ == "__main__":
                                                     v.totUnrealizedReturn))
 
         # Contributions to date
-        contributions['currency'] = readContributions(
+        cashflows = readContributions(
             dataTable['contributions'], date, currency)
-        TotContributions = contributions['currency']['contribution'].sum()
+        TotContributions = -1* cashflows.total() # IRR calculations: cash contributed is negative
+
+        # Calculate MWRR (XIRR) since inception, not including today
+        # Get all cashflows
+        portfolio_values = readDBValues(config, resultTable[currency])
+
+        # Get initial and today's values
+        initial_date, initial_value = portfolio_values.iloc[0]
+        final_date = date
+        final_value = totValue
+
+        # Add initial and today's values to the list
+        cashflows.dates.extend([initial_date, final_date])
+        cashflows.amounts.extend([-1*initial_value,final_value])
+
+        # Create dataframe with dates and amounts
+        df = pd.DataFrame({'dates': cashflows.dates, 'amount': cashflows.amounts})
+
+        # Truncate the dataframe, then sort it
+        df = df.loc[(df.dates >= initial_date) & (df.dates <= final_date) ]
+        df.sort_values('dates', inplace=True)
+
+        mwrr = xirr(df)
 
         print('\n*** Summary ({}): ***'.format(currency))
         print('Total Contributions: ${:,.0f}\n'
               'Total Value: ${:,.0f}\n'
               'Total Unrealized Gain: ${:,.0f}\n'
-              'Total Realized Gain: ${:,.0f}\n\n'
+              'Total Realized Gain: ${:,.0f}\n'
+              'Money Weighted Rate of Return (since {}): {:,.1f}%\n\n'
               .format(TotContributions, totValue, totUnrealizedReturn,
-                      totRealGain))
+                      totRealGain, initial_date.strftime("%Y-%m-%d"), mwrr*100))
 
         print("Writing to the DB...")
         writeDBValue(date, round(totValue, 2), TotContributions, config,
