@@ -58,3 +58,18 @@ class Security:
     def split(self, ratio):
         self.qty *= ratio
         self.price *= 1/ratio
+
+class Cashflows:
+    def __init__(self, currency):
+        self.currency = currency
+        self.moneyIn = 0
+        self.moneyOut = 0
+        self.dates = []
+        self.amounts = []
+
+    def event(self, date, amount):
+        self.dates.append(date)
+        self.amounts.append(-1*amount)
+
+    def total(self):
+        return sum(self.amounts)
