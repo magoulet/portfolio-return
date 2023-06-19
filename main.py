@@ -5,7 +5,6 @@ from tabulate import tabulate
 import argparse
 import datetime as dt
 import json
-import numpy as np
 import os
 import pandas as pd
 import pickle
@@ -16,13 +15,13 @@ import yfinance as yf
 
 def getconfig():
     path = os.path.dirname(os.path.abspath(__file__))
-    configurationFile = path + '/config.json'
-    config = json.loads(open(configurationFile).read())
+    configuration_file = path + '/config.json'
+    config = json.loads(open(configuration_file).read())
 
     return config
 
 
-def argParser():
+def arg_parser():
     parser = argparse.ArgumentParser(description='Program Flags')
     parser.add_argument('-d', help='Snapshot date - format YYYY-MM-DD',
                         action="store", dest='date', default=False)
@@ -63,17 +62,17 @@ def build_portfolio(table, date, currency, config):
     return portfolio
 
 
-def get_price(tickers, date, path, OFFLINE=None):
-    '''
+def get_price(tickers, date, path, offline=None):
+    """
     Expected output format from yf:
                         Price
     Attributes Symbols
     Adj Close  BNS.TO   67.870003
                CAE.TO   33.270000
                ...      ...
-    '''
+    """
     prices = {}
-    if not OFFLINE:
+    if not offline:
         print("Getting prices for : ", tickers)
         df = yf.download(tickers, start=date-dt.timedelta(days=5), end=date+dt.timedelta(days=1),
                          group_by='Ticker')
@@ -95,7 +94,7 @@ def get_price(tickers, date, path, OFFLINE=None):
 
 
 
-def database_helper(sqlCommand, sqloperation, config):
+def database_helper(sql_command, sql_operation, config):
     host = config["mysql"][0]["host"]
     user = config["mysql"][0]["user"]
     password = config["mysql"][0]["password"]
@@ -105,72 +104,72 @@ def database_helper(sqlCommand, sqloperation, config):
     engine = create_engine(f"mysql+mysqlconnector://{user}:{password}@{host}/{database}")
     connection = engine.connect()
 
-    if sqloperation == "Select":
+    if sql_operation == "Select":
         try:
-            data = pd.read_sql(text(sqlCommand), connection)
+            data = pd.read_sql(text(sql_command), connection)
         except Exception as e:
             print("Cannot select from the database: ", str(e))
             data = None
-    elif sqloperation == "Insert":
+    elif sql_operation == "Insert":
         trans = connection.begin()
         try:
-            connection.execute(text(sqlCommand))
+            connection.execute(text(sql_command))
             trans.commit()
         except Exception as e:
             print("Cannot insert into the database: ", str(e))
             trans.rollback()
         data = None
     else:
-        print("Invalid SQL operation:", sqloperation)
+        print("Invalid SQL operation:", sql_operation)
         data = None
 
     return data
 
 
 def read_db_output(config, table):
-    sqlCommand = "SELECT date, value FROM %s;" \
-                 % (table)
-    data = database_helper(sqlCommand, "Select", config)
+    sql_command = "SELECT date, value FROM %s;" \
+                  % table
+    data = database_helper(sql_command, "Select", config)
     return data
 
-def write_db_output(end, TotValue, TotContributions, config, table):
-    sqlCommand = "INSERT INTO %s VALUES ('%s', '%s', '%s') ON DUPLICATE KEY \
+def write_db_output(end, tot_value, tot_contributions, config, table):
+    sql_command = "INSERT INTO %s VALUES ('%s', '%s', '%s') ON DUPLICATE KEY \
                  UPDATE value=VALUES(value), \
                  contributions=VALUES(contributions);" \
-                 % (table, end, TotValue, TotContributions)
-    database_helper(sqlCommand, "Insert", config)
+                 % (table, end, tot_value, tot_contributions)
+    database_helper(sql_command, "Insert", config)
     return None
 
 
 def read_db_transactions(config, table, date, currency):
-    sqlCommand = "SELECT * FROM %s WHERE Date <= '%s' \
+    sql_command = "SELECT * FROM %s WHERE Date <= '%s' \
                   AND LOWER(Currency) = '%s';" \
                   % (table, date, currency)
-    data = database_helper(sqlCommand, "Select", config)
+    data = database_helper(sql_command, "Select", config)
     return data
 
 
 def read_db_contributions(config, table, date, currency):
-    sqlCommand = "SELECT * FROM %s WHERE Date <= '%s' \
+    sql_command = "SELECT * FROM %s WHERE Date <= '%s' \
                  AND LOWER(currency) = '%s';" \
                  % (table, date, currency)
-    data = database_helper(sqlCommand, "Select", config)
+    data = database_helper(sql_command, "Select", config)
     return data
 
 
 def read_time_history(config, table, date):
-    sqlCommand = "(SELECT * FROM %s WHERE date <= '%s' \
+    sql_command = "(SELECT * FROM %s WHERE date <= '%s' \
                   ORDER BY Date desc LIMIT 2) \
                   ORDER BY Date asc;" \
                   % (table, date)
-    data = database_helper(sqlCommand, "Select", config)
+    data = database_helper(sql_command, "Select", config)
     return data
 
 
 def get_daily_variation(df):
     df['daily variation'] = df['value'].diff()
-    dailydelta = df['daily variation'].iloc[-1]
-    return dailydelta
+    daily_delta = df['daily variation'].iloc[-1]
+    return daily_delta
 
 
 def telegram_notification(cfg, body):
@@ -190,19 +189,19 @@ def telegram_notification(cfg, body):
 
 def main():
     process = psutil.Process(os.getpid())
-    execTime = 0
-    StartTime = time.time()
+    exec_time = 0
+    start_time = time.time()
 
     config = getconfig()
-    Timing = eval(config["misc"][0]["Timing"])
-    dataTable = {'contributions': config["mysql"][0]["ContributionTable"],
+    timing = eval(config["misc"][0]["Timing"])
+    data_table = {'contributions': config["mysql"][0]["ContributionTable"],
                  'trades': config["mysql"][0]["TransactionTable"]}
-    resultTable = {'CAD': config["mysql"][0]["ResultTableCAD"],
+    result_table = {'CAD': config["mysql"][0]["ResultTableCAD"],
                    'USD': config["mysql"][0]["ResultTableUSD"]}
     path = config["directories"][0]["pickles"]
     currencies = eval(config['misc'][0]["Currencies"])
 
-    args = argParser()
+    args = arg_parser()
 
     if args.date:
         try:
@@ -216,7 +215,7 @@ def main():
     portfolio = {}
 
     for currency in currencies:
-        portfolio[currency] = build_portfolio(dataTable['trades'],
+        portfolio[currency] = build_portfolio(data_table['trades'],
                                               date,
                                               currency,
                                               config)
@@ -230,9 +229,9 @@ def main():
         prices = get_price(active_tickers, date, path)
 
         # Initialize variable that we'll use later
-        totValue = 0
-        totMoneyIn = 0
-        totRealGain = 0
+        tot_value = 0
+        tot_money_in = 0
+        tot_real_gain = 0
         raw_output_data = []
 
         # Iterate through all tickers in the portfolio, since inception
@@ -244,9 +243,9 @@ def main():
                     value.costBasis * 100
                 value.totUnrealizedReturn = value.qty * (value.price -
                                                          value.costBasis)
-                totValue += value.qty * value.price
-                totMoneyIn += value.moneyIn
-                totRealGain += value.realGain
+                tot_value += value.qty * value.price
+                tot_money_in += value.moneyIn
+                tot_real_gain += value.realGain
                 output_row = [value.ticker,
                               value.qty,
                               value.price,
@@ -257,9 +256,9 @@ def main():
                               value.totUnrealizedReturn]
                 raw_output_data.append(output_row)
             else:
-                totRealGain += value.realGain
-        totUnrealizedReturn = totValue - totMoneyIn
-        percUnrealizedReturn = (totValue - totMoneyIn) / totMoneyIn * 100
+                tot_real_gain += value.realGain
+        tot_unrealized_return = tot_value - tot_money_in
+        # perc_unrealized_return = (tot_value - tot_money_in) / tot_money_in * 100
 
         # Prepare output
         output = pd.DataFrame(raw_output_data)
@@ -268,21 +267,21 @@ def main():
 
         output.sort_values('Unreal. Gain ($)', inplace=True)
 
-        print(tabulate(output, headers="keys", floatfmt=(".2f")))
+        print(tabulate(output, headers="keys", floatfmt=".2f"))
 
         # Contributions to date
         cashflows = read_contributions(
-            dataTable['contributions'], date, currency, config)
-        TotContributions = -1* cashflows.total() # IRR calculations: cash contributed is negative
+            data_table['contributions'], date, currency, config)
+        tot_contributions = -1* cashflows.total() # IRR calculations: cash contributed is negative
 
         # Calculate MWRR (XIRR) since inception, not including today
         # Get all cashflows
-        portfolio_values = read_db_output(config, resultTable[currency])
+        portfolio_values = read_db_output(config, result_table[currency])
 
         # Get initial and today's values
         initial_date, initial_value = portfolio_values.iloc[0]
         final_date = date
-        final_value = totValue
+        final_value = tot_value
 
         # Add initial and today's values to the list
         cashflows.dates.extend([initial_date, final_date])
@@ -303,34 +302,34 @@ def main():
               'Total Unrealized Gain: ${:,.0f}\n'
               'Total Realized Gain: ${:,.0f}\n'
               'Money Weighted Rate of Return (since {}): {:,.1f}%\n\n'
-              .format(TotContributions, totValue, totUnrealizedReturn,
-                      totRealGain, initial_date.strftime("%Y-%m-%d"), mwrr*100))
+              .format(tot_contributions, tot_value, tot_unrealized_return,
+                      tot_real_gain, initial_date.strftime("%Y-%m-%d"), mwrr*100))
 
         print("Writing to the DB...")
-        write_db_output(date, round(totValue, 2), TotContributions, config,
-                        resultTable[currency])
+        write_db_output(date, round(tot_value, 2), tot_contributions, config,
+                        result_table[currency])
 
         if args.sendmail:
-            TimeHistory = read_time_history(config, resultTable[currency],
+            time_history = read_time_history(config, result_table[currency],
                                             dt.date.today())
-            dailydelta = get_daily_variation(TimeHistory)
+            daily_delta = get_daily_variation(time_history)
 
             body = 'Daily variation ('+currency+'): $'\
-                + str(dailydelta.round(2))\
+                + str(daily_delta.round(2))\
                 + '\nTotal value of the portfolio: $'\
-                + str(round(totValue, 2))
+                + str(round(tot_value, 2))
             print(body)
             # sendmail(sender, to, subject, body)
             print("Sending mail to user...")
             telegram_notification(config['telegram'][0], body)
 
-    FinishTime = time.time()
-    execTime += FinishTime-StartTime
+    finish_time = time.time()
+    exec_time += finish_time-start_time
     print('Total memory usage: {:,.0f} kb'.format(
         float(process.memory_info().rss)/1000))  # in bytes
 
-    if Timing:
-        print("Total Execution Time: ", execTime)
+    if timing:
+        print("Total Execution Time: ", exec_time)
 
 
 

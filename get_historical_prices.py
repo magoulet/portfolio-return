@@ -14,7 +14,7 @@ import requests
 import time
 import yfinance as yf
 from classes import Security
-from main import argParser, getconfig, build_portfolio, get_price
+from main import arg_parser, getconfig, build_portfolio, get_price
 
 
 def dumpHistoricalPrice(portfolio, path):
@@ -62,7 +62,7 @@ if __name__ == "__main__":
     path = config["directories"][0]["pickles"]
     currencies = eval(config['misc'][0]["Currencies"])
 
-    args = argParser()
+    args = arg_parser()
 
     if args.date:
         try:
