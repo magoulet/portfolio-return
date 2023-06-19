@@ -1,14 +1,11 @@
-#!/usr/bin/env python3
-#
-# Notes:
-# Filtering a DF: df[df['Type'] == 'Contr']
-
+from classes import Security, Cashflows
+from pyxirr import xirr
+from sqlalchemy import create_engine, text
+from tabulate import tabulate
 import argparse
 import datetime as dt
 import json
-import mysql.connector
 import numpy as np
-import operator
 import os
 import pandas as pd
 import pickle
@@ -16,8 +13,6 @@ import psutil
 import requests
 import time
 import yfinance as yf
-from portfolio_classes import Security, Cashflows
-from pyxirr import xirr
 
 def getconfig():
     path = os.path.dirname(os.path.abspath(__file__))
@@ -33,30 +28,22 @@ def argParser():
                         action="store", dest='date', default=False)
     parser.add_argument('-m', help='Sends notification message to user',
                         action="store_true", dest='sendmail', default=False)
-    parser.add_argument('-rebalance', help='Rebalances Portfolio',
-                        action="store", dest='rebalance', default=False)
-    parser.add_argument('-curr', help='Selected rebalancing currency',
-                        action="store", dest='currency', default='CAD')
-    parser.add_argument('-broker', help='Selected rebalancing broker',
-                        action="store", dest='broker', default='dob')
     args = parser.parse_args()
 
     return args
 
 
-def readContributions(table, date, currency):
+def read_contributions(table, date, currency, config):
     cashflows = Cashflows(currency)
-    df = readDBContributions(config, table, date, currency)
+    df = read_db_contributions(config, table, date, currency)
     for index, row in df.iterrows():
         cashflows.event(row.date, row.contribution)
 
     return cashflows
 
 
-def readTransactions(table, date, currency, config):
-    df = readDBTransactions(config, table, date, currency)
-    portfolio = {}
-    tickers = []
+def build_portfolio(table, date, currency, config):
+    df = read_db_transactions(config, table, date, currency)
 
     # Adjust for stock splits
     df['Units'] = df['Units'] * df['SplitRatio']
@@ -76,7 +63,7 @@ def readTransactions(table, date, currency, config):
     return portfolio
 
 
-def getPrice(tickers, date, path):
+def get_price(tickers, date, path, OFFLINE=None):
     '''
     Expected output format from yf:
                         Price
@@ -86,15 +73,7 @@ def getPrice(tickers, date, path):
                ...      ...
     '''
     prices = {}
-    try:
-        for ticker in tickers:
-            with open(path+ticker+'.pickle', 'rb') as file:
-                price = pickle.load(file).to_dict()
-                prices[ticker] = price['Adj Close'][pd.Timestamp(date)]
-
-        return {'Adj Close': prices}
-
-    except Exception:
+    if not OFFLINE:
         print("Getting prices for : ", tickers)
         df = yf.download(tickers, start=date-dt.timedelta(days=5), end=date+dt.timedelta(days=1),
                          group_by='Ticker')
@@ -106,114 +85,95 @@ def getPrice(tickers, date, path):
             .reset_index(level=1)
 
         return result[['ticker', 'Adj Close']].set_index('ticker').to_dict()
+    else:
+        for ticker in tickers:
+            with open(path+ticker+'.pickle', 'rb') as file:
+                price = pickle.load(file).to_dict()
+                prices[ticker] = price['Adj Close'][pd.Timestamp(date)]
+
+        return {'Adj Close': prices}
 
 
 
-def databaseHelper(sqlCommand, sqloperation, config):
+def database_helper(sqlCommand, sqloperation, config):
     host = config["mysql"][0]["host"]
     user = config["mysql"][0]["user"]
     password = config["mysql"][0]["password"]
     database = config["mysql"][0]["database"]
 
-    my_connect = mysql.connector.connect(host=host, user=user,
-                                         password=password,
-                                         database=database)
-    cursor = my_connect.cursor()
+    # Create the SQLAlchemy engine
+    engine = create_engine(f"mysql+mysqlconnector://{user}:{password}@{host}/{database}")
+    connection = engine.connect()
 
     if sqloperation == "Select":
         try:
-            data = pd.read_sql(sqlCommand, my_connect)
-        except:
-            print("Cannot select from the database...")
-    if sqloperation == "Insert":
+            data = pd.read_sql(text(sqlCommand), connection)
+        except Exception as e:
+            print("Cannot select from the database: ", str(e))
+            data = None
+    elif sqloperation == "Insert":
+        trans = connection.begin()
         try:
-            cursor.execute(sqlCommand)
-            my_connect.commit()
-        except:
-            my_connect.rollback()
+            connection.execute(text(sqlCommand))
+            trans.commit()
+        except Exception as e:
+            print("Cannot insert into the database: ", str(e))
+            trans.rollback()
+        data = None
+    else:
+        print("Invalid SQL operation:", sqloperation)
         data = None
 
-    my_connect.close()
     return data
 
 
-def readDBValues(config, table):
+def read_db_output(config, table):
     sqlCommand = "SELECT date, value FROM %s;" \
                  % (table)
-    data = databaseHelper(sqlCommand, "Select", config)
+    data = database_helper(sqlCommand, "Select", config)
     return data
 
-def writeDBValue(end, TotValue, TotContributions, config, table):
+def write_db_output(end, TotValue, TotContributions, config, table):
     sqlCommand = "INSERT INTO %s VALUES ('%s', '%s', '%s') ON DUPLICATE KEY \
                  UPDATE value=VALUES(value), \
                  contributions=VALUES(contributions);" \
                  % (table, end, TotValue, TotContributions)
-    databaseHelper(sqlCommand, "Insert", config)
+    database_helper(sqlCommand, "Insert", config)
     return None
 
 
-def readDBTransactions(config, table, date, currency):
+def read_db_transactions(config, table, date, currency):
     sqlCommand = "SELECT * FROM %s WHERE Date <= '%s' \
                   AND LOWER(Currency) = '%s';" \
                   % (table, date, currency)
-    data = databaseHelper(sqlCommand, "Select", config)
+    data = database_helper(sqlCommand, "Select", config)
     return data
 
 
-def readDBContributions(config, table, date, currency):
+def read_db_contributions(config, table, date, currency):
     sqlCommand = "SELECT * FROM %s WHERE Date <= '%s' \
                  AND LOWER(currency) = '%s';" \
                  % (table, date, currency)
-    data = databaseHelper(sqlCommand, "Select", config)
+    data = database_helper(sqlCommand, "Select", config)
     return data
 
 
-def timeHistoryRead(config, table, date):
+def read_time_history(config, table, date):
     sqlCommand = "(SELECT * FROM %s WHERE date <= '%s' \
                   ORDER BY Date desc LIMIT 2) \
                   ORDER BY Date asc;" \
                   % (table, date)
-    data = databaseHelper(sqlCommand, "Select", config)
+    data = database_helper(sqlCommand, "Select", config)
     return data
 
 
-def getDailyVariation(df):
+def get_daily_variation(df):
     df['daily variation'] = df['value'].diff()
     dailydelta = df['daily variation'].iloc[-1]
     return dailydelta
 
 
-def rebalance(df, ExtraCash, broker, currency, end):
-    print('\nRebalancing Portfolio with ${:,.0f} extra cash\n'
-          .format(ExtraCash))
-    # Current weight
-    # Sort by AssetClass
-    df = df[df['Broker'] == broker]
-    Weight = df.pivot_table(index='AssetClass', values=['Value'],
-                            aggfunc=np.sum)
-    TargetWeight = pd.read_csv('target_weight.csv')
-    Weight = pd.merge(Weight, TargetWeight[TargetWeight['Currency'] ==
-                      currency], on='AssetClass', how='inner')
-    Weight['CurrWeight'] = Weight['Value'] / Weight['Value'].sum() * 100
-
-    # Delta
-    Weight['TargetPositions'] = Weight['TargetWeight'] * \
-        Weight['Value'].sum() / 100
-    Weight['DeltaPositions'] = Weight['TargetPositions'] - Weight['Value']
-    Weight['Extra'] = Weight['TargetWeight'] * ExtraCash / 100
-    Weight['Delta'] = Weight['Extra'] + Weight['DeltaPositions']
-
-    # Merge the price column to the Weight dataframe
-    Weight = pd.merge(Weight, df[['Ticker', 'Adj Close']], left_on='Ticker',
-                      right_on='Ticker', how='inner')
-
-    Weight['NumUnits'] = (Weight['Delta'] / Weight['Adj Close']).round(4)
-
-    print('\nPortfolio Rebalance:')
-    print(Weight)
-
-
-def telegramNotification(cfg, body):
+def telegram_notification(cfg, body):
 
     url = 'https://api.telegram.org/bot{0}/{1}'.format(cfg['token'],
                                                        cfg['method'])
@@ -228,16 +188,12 @@ def telegramNotification(cfg, body):
     return response
 
 
-if __name__ == "__main__":
+def main():
     process = psutil.Process(os.getpid())
     execTime = 0
     StartTime = time.time()
 
     config = getconfig()
-    username = config["plotly"][0]["user"]
-    api_key = config["plotly"][0]["api"]
-    DownloadOnly = eval(config["misc"][0]["DownloadOnly"])
-    OfflineData = eval(config["misc"][0]["OfflineData"])
     Timing = eval(config["misc"][0]["Timing"])
     dataTable = {'contributions': config["mysql"][0]["ContributionTable"],
                  'trades': config["mysql"][0]["TransactionTable"]}
@@ -258,26 +214,31 @@ if __name__ == "__main__":
         date = dt.date.today()
 
     portfolio = {}
-    contributions = {}
 
     for currency in currencies:
-        portfolio[currency] = readTransactions(dataTable['trades'], date,
-                                               currency, config)
+        portfolio[currency] = build_portfolio(dataTable['trades'],
+                                              date,
+                                              currency,
+                                              config)
 
-        tickers = []
+        # Get a list of active tickers (non-null qty) in the portfolio
+        active_tickers = []
         for key, value in portfolio[currency].items():
             if value.qty > 0:
-                tickers.append(value.ticker)
+                active_tickers.append(value.ticker)
 
-        prices = getPrice(tickers, date, path)
+        prices = get_price(active_tickers, date, path)
 
+        # Initialize variable that we'll use later
         totValue = 0
         totMoneyIn = 0
         totRealGain = 0
+        raw_output_data = []
 
-        # for key, value in portfolio[currency].items():
+        # Iterate through all tickers in the portfolio, since inception
+        # and execute calculations
         for key, value in portfolio[currency].items():
-            if value.qty > 0:
+            if value.ticker in active_tickers:
                 value.price = prices['Adj Close'][value.ticker]
                 value.UnrealizedReturn = (value.price - value.costBasis) / \
                     value.costBasis * 100
@@ -286,33 +247,37 @@ if __name__ == "__main__":
                 totValue += value.qty * value.price
                 totMoneyIn += value.moneyIn
                 totRealGain += value.realGain
+                output_row = [value.ticker,
+                              value.qty,
+                              value.price,
+                              value.realGain,
+                              value.qty*value.costBasis,
+                              value.price*value.qty,
+                              value.UnrealizedReturn,
+                              value.totUnrealizedReturn]
+                raw_output_data.append(output_row)
             else:
                 totRealGain += value.realGain
         totUnrealizedReturn = totValue - totMoneyIn
         percUnrealizedReturn = (totValue - totMoneyIn) / totMoneyIn * 100
 
-        print("{:<8} {:>8} {:>8} {:>12} {:>12} {:>9} {:>12} {:>12}".
-              format('Ticker', 'Qty', 'Price', 'Real. Gain', 'Cost Basis',
-                     'Value', 'Unreal. Gain {%}', 'Unreal. Gain ($)'))
-        for v in sorted(portfolio[currency].values(), key=operator.
-                        attrgetter('totUnrealizedReturn')):
-            if v.qty > 0:
-                print(('{:<8} {:>8.2f} {:>8.2f} {:>12.2f} {:>12.2f} {:>9.2f}'
-                      '{:>17.1f} {:>16.2f}').format(v.ticker, v.qty, v.price,
-                                                    v.realGain,
-                                                    v.qty*v.costBasis,
-                                                    v.price*v.qty,
-                                                    v.UnrealizedReturn,
-                                                    v.totUnrealizedReturn))
+        # Prepare output
+        output = pd.DataFrame(raw_output_data)
+        output.columns = ['Ticker', 'Qty', 'Price', 'Real. Gain', 'Cost Basis',
+                          'Value', 'Unreal. Gain {%}', 'Unreal. Gain ($)']
+
+        output.sort_values('Unreal. Gain ($)', inplace=True)
+
+        print(tabulate(output, headers="keys", floatfmt=(".2f")))
 
         # Contributions to date
-        cashflows = readContributions(
-            dataTable['contributions'], date, currency)
+        cashflows = read_contributions(
+            dataTable['contributions'], date, currency, config)
         TotContributions = -1* cashflows.total() # IRR calculations: cash contributed is negative
 
         # Calculate MWRR (XIRR) since inception, not including today
         # Get all cashflows
-        portfolio_values = readDBValues(config, resultTable[currency])
+        portfolio_values = read_db_output(config, resultTable[currency])
 
         # Get initial and today's values
         initial_date, initial_value = portfolio_values.iloc[0]
@@ -342,13 +307,13 @@ if __name__ == "__main__":
                       totRealGain, initial_date.strftime("%Y-%m-%d"), mwrr*100))
 
         print("Writing to the DB...")
-        writeDBValue(date, round(totValue, 2), TotContributions, config,
-                     resultTable[currency])
+        write_db_output(date, round(totValue, 2), TotContributions, config,
+                        resultTable[currency])
 
         if args.sendmail:
-            TimeHistory = timeHistoryRead(config, resultTable[currency],
-                                          dt.date.today())
-            dailydelta = getDailyVariation(TimeHistory)
+            TimeHistory = read_time_history(config, resultTable[currency],
+                                            dt.date.today())
+            dailydelta = get_daily_variation(TimeHistory)
 
             body = 'Daily variation ('+currency+'): $'\
                 + str(dailydelta.round(2))\
@@ -357,14 +322,7 @@ if __name__ == "__main__":
             print(body)
             # sendmail(sender, to, subject, body)
             print("Sending mail to user...")
-            telegramNotification(config['telegram'][0], body)
-
-    if args.rebalance:
-        ExtraInvest = args.rebalance
-        broker = args.broker
-        rebalCurrency = args.currency
-        rebalance(portfolio[rebalCurrency], float(ExtraInvest), broker,
-                  rebalCurrency, date)
+            telegram_notification(config['telegram'][0], body)
 
     FinishTime = time.time()
     execTime += FinishTime-StartTime
@@ -373,3 +331,8 @@ if __name__ == "__main__":
 
     if Timing:
         print("Total Execution Time: ", execTime)
+
+
+
+if __name__ == "__main__":
+    main()
