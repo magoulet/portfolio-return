@@ -1,6 +1,7 @@
 argparse
 numpy
 pandas
+pathlib
 psutil
 pyxirr
 requests

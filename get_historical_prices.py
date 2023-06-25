@@ -14,7 +14,7 @@ import requests
 import time
 import yfinance as yf
 from classes import Security
-from main import arg_parser, getconfig, build_portfolio, get_price
+from main import arg_parser, read_config, build_portfolio, get_price
 
 
 def dumpHistoricalPrice(portfolio, path):
@@ -57,7 +57,7 @@ def createDir(path):
 
 if __name__ == "__main__":
 
-    config = getconfig()
+    config = read_config()
     dataTable = {'trades': config["mysql"][0]["TransactionTable"]}
     path = config["directories"][0]["pickles"]
     currencies = eval(config['misc'][0]["Currencies"])

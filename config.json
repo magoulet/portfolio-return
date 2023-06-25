@@ -1,5 +1,5 @@
 {
-"mysql":[{
+"mysql":{
 	"host":"raspberrypi1",
 	"user":"logger",
 	"password":"password",
@@ -8,26 +8,26 @@
 	"ContributionTable":"contributions",
 	"ResultTableCAD":"caddata",
 	"ResultTableUSD":"usddata"
-	}],
-"plotly":[{
+	},
+"plotly":{
 	"user":"magoulet",
 	"api":"BwgUtD4nmlTdxmP6M27k"
-	}],
-"alphavantage":[{
+	},
+"alphavantage":{
 	"api":"0M2357MRIZDYTSJD"
-	}],
-"misc":[{
+	},
+"misc":{
 	"DownloadOnly":"False",
 	"OfflineData":"False",
 	"Timing":"True",
 	"Currencies":"['CAD', 'USD']"
-	}],
-"telegram":[{
+	},
+"telegram":{
 	"token":"1048173690:AAGvugosczAuc0ccQAb-Fyut2SjgF713Mn4",
 	"method":"sendMessage",
 	"chat_id":"1052843176"
-	}],
-"directories":[{
+	},
+"directories":{
 	"pickles":"./pickles/"
-	}]
+	}
 }
