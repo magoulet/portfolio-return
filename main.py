@@ -215,9 +215,9 @@ def main():
 
         # Get a list of active tickers (non-null qty) in the portfolio
         active_tickers = []
-        for key, value in portfolio[currency].items():
-            if value.qty > 0:
-                active_tickers.append(value.ticker)
+        for key, security in portfolio[currency].items():
+            if security.qty > 0:
+                active_tickers.append(security.ticker)
 
         prices = get_price(active_tickers, date, pickle_path)
 
@@ -229,27 +229,27 @@ def main():
 
         # Iterate through all tickers in the portfolio, since inception
         # and execute calculations
-        for key, value in portfolio[currency].items():
-            if value.ticker in active_tickers:
-                value.price = prices['Adj Close'][value.ticker]
-                value.UnrealizedReturn = (value.price - value.costBasis) / \
-                    value.costBasis * 100
-                value.totUnrealizedReturn = value.qty * (value.price -
-                                                         value.costBasis)
-                tot_value += value.qty * value.price
-                tot_money_in += value.moneyIn
-                tot_real_gain += value.realGain
-                output_row = [value.ticker,
-                              value.qty,
-                              value.price,
-                              value.realGain,
-                              value.qty*value.costBasis,
-                              value.price*value.qty,
-                              value.UnrealizedReturn,
-                              value.totUnrealizedReturn]
+        for key, security in portfolio[currency].items():
+            if security.ticker in active_tickers:
+                security.price = prices['Adj Close'][security.ticker]
+                security.UnrealizedReturn = (security.price - security.costBasis) / \
+                    security.costBasis * 100
+                security.totUnrealizedReturn = security.qty * (security.price -
+                                                         security.costBasis)
+                tot_value += security.qty * security.price
+                tot_money_in += security.moneyIn
+                tot_real_gain += security.realGain
+                output_row = [security.ticker,
+                              security.qty,
+                              security.price,
+                              security.realGain,
+                              security.qty*security.costBasis,
+                              security.price*security.qty,
+                              security.UnrealizedReturn,
+                              security.totUnrealizedReturn]
                 raw_output_data.append(output_row)
             else:
-                tot_real_gain += value.realGain
+                tot_real_gain += security.realGain
         tot_unrealized_return = tot_value - tot_money_in
         # perc_unrealized_return = (tot_value - tot_money_in) / tot_money_in * 100
 
