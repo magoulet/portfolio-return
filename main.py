@@ -5,6 +5,8 @@ from tabulate import tabulate
 import argparse
 import datetime as dt
 import json
+import logging
+import logging.handlers as handlers
 import os
 import pandas as pd
 import pathlib
@@ -27,8 +29,32 @@ parser.add_argument('-m', help='Sends notification message to user',
                     action="store_true", dest='sendmail', default=False)
 args = parser.parse_args()
 
+# create a logger object instance
+logger = logging.getLogger()
 
-def read_contributions(table, date, currency):
+# specifies the lowest severity for logging
+logger.setLevel(logging.NOTSET)
+
+# set a destination for your logs or a "handler"
+# here, we choose to print on console (a consoler handler)
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.ERROR)
+
+# set the logging format for your handler
+log_format = '%(asctime)s | %(levelname)s: %(message)s'
+console_handler.setFormatter(logging.Formatter(log_format))
+
+# finally, we add the handler to the logger
+logger.addHandler(console_handler)
+
+# Create the rotating file handler. Limit the size to 100 KB.
+# file_handler = logging.FileHandler('app.log')
+file_handler = handlers.RotatingFileHandler('app.log', maxBytes=100000, backupCount=2)
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(logging.Formatter(log_format))
+logger.addHandler(file_handler)
+
+def read_cashflows(table, date, currency):
     cashflows = Cashflows(currency)
     df = read_db_contributions(table, date, currency)
     for index, row in df.iterrows():
@@ -69,11 +95,11 @@ def get_price(tickers, date, path, offline=None):
     """
     prices = {}
     if not offline:
-        print("Getting prices for : ", tickers)
+        logger.info(f"Getting prices for : {tickers}")
         df = yf.download(tickers, start=date-dt.timedelta(days=5), end=date+dt.timedelta(days=1),
                          group_by='Ticker')
         if df.empty:
-            print('DataFrame is empty!')
+            logger.error('Yahoo Finance returned an empty dataset!')
             exit()
         df.ffill(inplace=True) #fill missing values with most recent data
         result = df[-1:].stack(level=0).rename_axis(['date', 'ticker']) \
@@ -104,7 +130,7 @@ def database_helper(sql_command, sql_operation):
         try:
             data = pd.read_sql(text(sql_command), connection)
         except Exception as e:
-            print("Cannot select from the database: ", str(e))
+            logger.error("Cannot execute select from the database: ", str(e))
             data = None
     elif sql_operation == "Insert":
         trans = connection.begin()
@@ -112,11 +138,11 @@ def database_helper(sql_command, sql_operation):
             connection.execute(text(sql_command))
             trans.commit()
         except Exception as e:
-            print("Cannot insert into the database: ", str(e))
+            logger.error("Cannot insert into the database: ", str(e))
             trans.rollback()
         data = None
     else:
-        print("Invalid SQL operation:", sql_operation)
+        logger.error("Invalid SQL operation:", sql_operation)
         data = None
 
     return data
@@ -168,12 +194,12 @@ def get_daily_variation(df):
     return daily_delta
 
 
-def telegram_notification(cfg, body):
+def send_telegram_notification(body):
 
-    url = 'https://api.telegram.org/bot{0}/{1}'.format(cfg['token'],
-                                                       cfg['method'])
+    url = 'https://api.telegram.org/bot{0}/{1}'.format(config['telegram']['token'],
+                                                       config['telegram']['method'])
     params = {
-        'chat_id': cfg['chat_id'],
+        'chat_id': config['telegram']['chat_id'],
         'parse_mode': 'Markdown',
         'text': body
     }
@@ -263,7 +289,7 @@ def main():
         print(tabulate(output, headers="keys", floatfmt=".2f"))
 
         # Contributions to date
-        cashflows = read_contributions(
+        cashflows = read_cashflows(
             data_table['contributions'], date, currency)
         tot_contributions = -1* cashflows.total() # IRR calculations: cash contributed is negative
 
@@ -298,7 +324,7 @@ def main():
               .format(tot_contributions, tot_value, tot_unrealized_return,
                       tot_real_gain, initial_date.strftime("%Y-%m-%d"), mwrr*100))
 
-        print("Writing to the DB...")
+        logger.info("Writing to the DB...")
         write_db_output(date, round(tot_value, 2), tot_contributions,
                         result_table[currency])
 
@@ -311,18 +337,18 @@ def main():
                 + str(daily_delta.round(2))\
                 + '\nTotal value of the portfolio: $'\
                 + str(round(tot_value, 2))
-            print(body)
+            logger.info(body)
             # sendmail(sender, to, subject, body)
-            print("Sending mail to user...")
-            telegram_notification(config['telegram'], body)
+            logger.info("Sending mail to user...")
+            send_telegram_notification(body)
 
     finish_time = time.time()
     exec_time += finish_time-start_time
-    print('Total memory usage: {:,.0f} kb'.format(
+    logger.info('Total memory usage: {:,.0f} kb'.format(
         float(process.memory_info().rss)/1000))  # in bytes
 
     if timing:
-        print("Total Execution Time: ", exec_time)
+        logger.info(f"Total Execution Time: {exec_time}")
 
 
 
