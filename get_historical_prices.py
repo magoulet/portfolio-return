@@ -13,8 +13,8 @@ import psutil
 import requests
 import time
 import yfinance as yf
-from portfolio_classes import Security
-from Portfolio_Return_oo import argParser, getconfig, readTransactions, getPrice
+from classes import Security
+from main import arg_parser, read_config, build_portfolio, get_price
 
 
 def dumpHistoricalPrice(portfolio, path):
@@ -57,12 +57,12 @@ def createDir(path):
 
 if __name__ == "__main__":
 
-    config = getconfig()
+    config = read_config()
     dataTable = {'trades': config["mysql"][0]["TransactionTable"]}
     path = config["directories"][0]["pickles"]
     currencies = eval(config['misc'][0]["Currencies"])
 
-    args = argParser()
+    args = arg_parser()
 
     if args.date:
         try:
@@ -78,6 +78,6 @@ if __name__ == "__main__":
     createDir(path)
 
     for currency in currencies:
-        portfolio[currency] = readTransactions(dataTable['trades'], date,
-                                               currency, config)
+        portfolio[currency] = build_portfolio(dataTable['trades'], date,
+                                              currency, config)
         dumpHistoricalPrice(portfolio[currency], path)

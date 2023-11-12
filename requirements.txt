@@ -1,8 +1,10 @@
 argparse
-mysql-connector
 numpy
 pandas
+pathlib
 psutil
 pyxirr
 requests
+sqlalchemy
+tabulate
 yfinance
