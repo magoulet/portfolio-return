@@ -1,0 +1,26 @@
+{
+"mysql":{
+	"host":"<host name>",
+	"user":"<user>",
+	"password":"<password>",
+	"database":"<db name>",
+	"TransactionTable":"<transactions table name>",
+	"ContributionTable":"<contributions table name>",
+	"ResultTableCAD":"<CAD results table name>",
+	"ResultTableUSD":"<USD results table name>"
+	},
+"misc":{
+	"DownloadOnly":"False",
+	"OfflineData":"False",
+	"Timing":"True",
+	"Currencies":"['CAD', 'USD']"
+	},
+"telegram":{
+	"token":"<Telegram token>",
+	"method":"sendMessage",
+	"chat_id":"<Telegram chat ID>"
+	},
+"directories":{
+	"pickles":"./pickles/"
+	}
+}
