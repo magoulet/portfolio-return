@@ -7,8 +7,8 @@ import requests
 
 def sendmail(fromaddr, to, subject, body):
 
-    key = "***REMOVED***"
-    sandbox = "***REMOVED***"
+    key = "<key>"
+    sandbox = "<sandbox>"
     mailer = 'mailgun'
 
     if mailer == "mailgun":
