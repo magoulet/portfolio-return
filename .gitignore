@@ -143,6 +143,7 @@ cython_debug/
 
 # Configurations
 *.yml
+*.yaml
 *.json
 *.csv
 

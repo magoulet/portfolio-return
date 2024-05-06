@@ -16,6 +16,8 @@ import requests
 import time
 import yfinance as yf
 
+from pymongo import MongoClient
+
 
 # Read configuration
 configuration_file = pathlib.Path('config.json')
@@ -102,7 +104,7 @@ def get_price(tickers, date, path, offline=None):
             logger.error('Yahoo Finance returned an empty dataset!')
             exit()
         df.ffill(inplace=True) #fill missing values with most recent data
-        result = df[-1:].stack(level=0).rename_axis(['date', 'ticker']) \
+        result = df[-1:].stack(level=0, future_stack=True).rename_axis(['date', 'ticker']) \
             .reset_index(level=1)
 
         return result[['ticker', 'Adj Close']].set_index('ticker').to_dict()
@@ -208,6 +210,45 @@ def send_telegram_notification(body):
 
     return response
 
+
+def store_results_in_mongo(results, currency, date):
+    try:
+        mongo_username = config['mongo']['username']
+        mongo_password = config['mongo']['password']
+        mongo_host = config['mongo']['host']
+        mongo_port = config['mongo']['port']
+
+        # Construct the MongoDB connection URI
+        mongo_uri = f"mongodb://{mongo_username}:{mongo_password}@{mongo_host}:{mongo_port}/"
+
+        # Connect to MongoDB
+        client = MongoClient(mongo_uri)
+        db = client['portfolio_tracker']
+        collection = db[currency.lower()]
+
+        # Convert date to a format that MongoDB can store
+        # date_str = date.isoformat()  # Convert to a string in ISO format
+
+        # Convert date to a datetime object
+        date_datetime = dt.datetime.combine(date, dt.datetime.min.time())
+
+
+        # Store the results as a document
+        result_doc = {
+            'date': date_datetime,
+            'currency': currency,
+            'total_value': results['total_value'],
+            'total_contributions': results['total_contributions'],
+            'total_unrealized_gain': results['total_unrealized_gain'],
+            'total_realized_gain': results['total_realized_gain'],
+            'mwrr': results['mwrr'],
+            'portfolio_details': results['portfolio_details']
+        }
+        # collection.insert_one(result_doc)
+        filter_criteria = {'date': date_datetime, 'currency': currency}
+        collection.replace_one(filter_criteria, result_doc, upsert=True)
+    except Exception as e:
+        logger.error("Error storing results in MongoDB:", str(e))
 
 def main():
     process = psutil.Process(os.getpid())
@@ -324,7 +365,21 @@ def main():
               .format(tot_contributions, tot_value, tot_unrealized_return,
                       tot_real_gain, initial_date.strftime("%Y-%m-%d"), mwrr*100))
 
+        # Store the results in a dictionary
+        results = {
+            'total_value': tot_value,
+            'total_contributions': tot_contributions,
+            'total_unrealized_gain': tot_unrealized_return,
+            'total_realized_gain': tot_real_gain,
+            'mwrr': mwrr,
+            'portfolio_details': output.to_dict('records')
+        }
+
+
         logger.info("Writing to the DB...")
+        # Store the results in MongoDB
+        store_results_in_mongo(results, currency, date)
+
         write_db_output(date, round(tot_value, 2), tot_contributions,
                         result_table[currency])
 
